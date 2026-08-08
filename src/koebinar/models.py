@@ -27,6 +27,7 @@ class DocumentStatus(str, Enum):
 
 class WebinarStatus(str, Enum):
     CREATED = "created"
+    QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -145,6 +146,8 @@ class WebinarCreateRequest(BaseModel):
     voice_id: str = "default"
     document_ids: list[str] = Field(default_factory=list)
     auto_run: bool = True
+    # When True, force in-process run even if settings.sync_pipeline is False.
+    sync: Optional[bool] = None
 
 
 class PipelineArtifact(BaseModel):
@@ -176,6 +179,7 @@ class Webinar(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
     artifacts: list[PipelineArtifact] = Field(default_factory=list)
     script: Optional[dict[str, Any]] = None
+    job_id: Optional[str] = None
 
 
 class ScriptPatchRequest(BaseModel):

@@ -243,10 +243,27 @@ def test_renderer_validate_and_remotion(settings: Settings, store: Store):
     r = VideoRenderer(store=store, settings=settings)
     with pytest.raises(RenderError):
         r.render("w", {"fps": 0, "total_frames": 0, "slides": []}, [])
-    assert remotion_available() is False
+    # With force_render_double in test settings, remotion is treated unavailable
+    assert remotion_available(settings) is False
+    # When Remotion is preferred but invoke fails, same entry falls back to double
+    settings.force_render_double = False
     with patch("koebinar.pipeline.renderer.remotion_available", return_value=True):
-        with pytest.raises(RenderError):
-            r.render("w", {"fps": 30, "total_frames": 30, "slides": [{"start_frame": 0, "end_frame": 30}]}, [{"title": "t"}], force_double=False)
+        with patch(
+            "koebinar.pipeline.renderer.invoke_remotion_render",
+            side_effect=RenderError("chromium missing"),
+        ):
+            uri, meta = r.render(
+                "w",
+                {
+                    "fps": 30,
+                    "total_frames": 30,
+                    "slides": [{"start_frame": 0, "end_frame": 30, "title": "t", "duration_frames": 30}],
+                },
+                [{"title": "t"}],
+                force_double=False,
+            )
+            assert meta["renderer"] == "double"
+            assert "chromium" in (meta.get("reason") or "")
 
 
 def test_timeline_validate_overlap_and_fps():

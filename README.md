@@ -12,71 +12,130 @@
 | `docs/requirements.md` | 要件定義書 v1.5 |
 | `docs/specification.md` | システム仕様書 v1.5 |
 
-## 実装（Phase 1 MVP）
+## ローカル B スタック（推奨）
 
-Python / FastAPI による API + 生成パイプライン。
+API / **永続 SQLite** / **成果物 FS** / **非同期パイプライン Worker** / **Remotion レンダ経路**。
+
+```text
+[Client] --HTTP--> [API :8000] --enqueue--> [SQLite jobs]
+                         |                        |
+                    metadata (SQLite)        [worker process]
+                         |                        |
+                    artifacts/  <---- outline..video / Remotion ----+
+```
+
+### 1. セットアップ
+
+```bash
+pip install -e ".[dev]"
+# Remotion（任意だが推奨）
+cd remotion && npm install && cd ..
+```
+
+### 2. 一括起動（API + Worker）
+
+```bash
+./scripts/start-stack.sh
+# 別ターミナルで:
+curl -s http://127.0.0.1:8000/api/v1/health/stack
+```
+
+ログ: `logs/api.log` / `logs/worker.log`  
+停止: Ctrl+C
+
+個別起動:
+
+```bash
+./scripts/start-api.sh      # port 8000
+./scripts/start-worker.sh   # claims jobs, runs pipeline incl. video
+```
+
+Docker Compose 相当:
+
+```bash
+docker compose up --build
+```
+
+### 3. 環境変数
+
+| 変数 | 既定 | 意味 |
+|---|---|---|
+| `KOEBINAR_DB_PATH` | `storage/koebinar.db` | メタデータ SQLite（API/Worker 共有必須） |
+| `KOEBINAR_ARTIFACTS_DIR` | `artifacts` | 中間生成物・MP4 |
+| `KOEBINAR_SYNC_PIPELINE` | `false`（スタック時） | `true` で API 内同期実行（テスト向け） |
+| `KOEBINAR_REMOTION_PROJECT_DIR` | `remotion` | Remotion プロジェクト |
+| `KOEBINAR_FORCE_RENDER_DOUBLE` | `false` | `true` で Remotion を使わず double |
+| `KOEBINAR_DEFAULT_AUTH_TOKEN` | `mvp-token` | Bearer トークン |
+| `KOEBINAR_MASTER_KEY` | dev 用 | BYOK 暗号化マスタ |
+
+### 4. 非同期フロー
+
+1. `POST /api/v1/webinars`（`auto_run=true`, `sync_pipeline=false`）→ `status=queued` + `job_id`（HTTP はすぐ返る）
+2. Worker が job を claim → outline…video を実行
+3. `GET /api/v1/webinars/{id}` で進捗・artifacts をポーリング
+4. `GET /api/v1/webinars/{id}/jobs` / `GET /api/v1/jobs/{job_id}`
+
+テストや同期デモでは body に `"sync": true` または `KOEBINAR_SYNC_PIPELINE=true`。
+
+### 5. Remotion
+
+- プロジェクト: `remotion/`（Composition `Webinar` + `render.mjs`）
+- パイプライン Step 6 は `VideoRenderer` が Remotion を invoke
+- headless Chromium が使えない環境では **同じ entry** が double MP4（ftyp/mdat）にフォールバック
+- アダプタ境界はユニットテストで runner を差し替えて検証
+
+```bash
+# 手動 render 試行
+cd remotion
+node render.mjs --props /path/props.json --output /tmp/out.mp4
+```
+
+## 実装構成
 
 ```
 src/koebinar/
   api/           # REST /api/v1
-  knowledge/     # 資料登録・chunk・検索
-  integrations/  # BYOK (OrcaRouter / ElevenLabs)
-  llm/           # OpenAI 互換クライアント
-  pipeline/      # outline→…→video オーケストレーション
-  qa/            # RAG Q&A + confidence gate
-tests/
-  mocks/         # API 互換モック (respx)
-  unit/ e2e/     # 単体 + 100+ E2E シナリオ
+  jobs.py        # SQLite job queue
+  worker.py      # pipeline worker CLI (koebinar-worker)
+  storage.py     # durable SQLite + FS artifacts
+  knowledge/ integrations/ llm/ pipeline/ qa/
+remotion/        # Remotion project + render.mjs
+scripts/         # start-api / start-worker / start-stack
+tests/           # unit + ≥100 E2E（モック）
 ```
 
-### セットアップ
+## テスト / カバレッジ
 
 ```bash
-pip install -e ".[dev]"
-```
-
-### 起動
-
-```bash
-# 既定トークン: mvp-token
-uvicorn koebinar.main:create_app --factory --host 0.0.0.0 --port 8000
-```
-
-### テスト / カバレッジ
-
-```bash
-# 全テスト + C0/C1 (statement + branch)
 pytest tests -q --cov=koebinar --cov-branch --cov-report=term
-
-# E2E のみ
 pytest tests/e2e -q
 ```
 
-外部 LLM / TTS は **API 互換モック**（`tests/mocks/providers.py`）を使用。実 API キー不要。
+外部 LLM/TTS は **API 互換モック**（`tests/mocks/providers.py`）。実 API キー不要。  
+テスト既定は `sync_pipeline=True` + render double（高速・決定的）。
 
-### 主要 API
+## 主要 API
 
 | Method | Path | 用途 |
 |---|---|---|
+| GET | `/api/v1/health` | 生存確認 |
+| GET | `/api/v1/health/stack` | B スタック状態（db / jobs / sync フラグ） |
 | POST | `/api/v1/knowledge/documents` | 資料登録 |
-| POST | `/api/v1/webinars` | ジョブ作成（auto_run 可） |
+| POST | `/api/v1/webinars` | ジョブ作成（async/sync） |
 | GET | `/api/v1/webinars/{id}` | 状態・中間生成物 |
+| GET | `/api/v1/webinars/{id}/jobs` | 関連ジョブ一覧 |
+| GET | `/api/v1/jobs/{id}` | ジョブ詳細 |
 | PATCH | `/api/v1/webinars/{id}/script` | 台本修正 |
-| POST | `/api/v1/webinars/{id}/steps/{step}/run` | ステップ再実行 |
+| POST | `/api/v1/webinars/{id}/steps/{step}/run` | ステップ再実行（`?sync=` 可） |
 | GET | `/api/v1/webinars/{id}/video` | MP4 取得 |
 | POST/GET/DELETE | `/api/v1/integrations/{provider}` | BYOK |
 | GET | `/api/v1/integrations/elevenlabs/voices` | Voice 一覧 |
 | POST/GET | `/api/v1/questions` | 視聴者 Q&A |
 | GET | `/api/v1/analytics/questions` | 質問エクスポート |
 
-認証: `Authorization: Bearer mvp-token`（`KOEBINAR_DEFAULT_AUTH_TOKEN` で変更可）
-
-### レンダラについて
-
-本環境では Remotion headless が使えないため、パイプライン境界で **honest double** が `webinar.mp4`（ISO BMFF 風 ftyp/mdat + タイムラインメタ）を出力する。タイムライン計算・成果物永続化は本番と同じ経路を通る。
+認証: `Authorization: Bearer mvp-token`
 
 ## Version
 
-- App: 0.1.0
+- App: 0.2.0 (B-stack + Remotion path)
 - Spec docs: v1.5
-- 2026-08-08

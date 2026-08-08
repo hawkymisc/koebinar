@@ -78,11 +78,13 @@ class IntegrationsService:
             raise IntegrationError(f"no integration for {provider.value}", code="not_found", status_code=404)
         rec.status = IntegrationStatus.DELETED
         rec.encrypted_api_key = ""
-        # invalidate voice refs for EL
+        # invalidate voice refs for EL (re-assign for durable store write-through)
         if provider == Provider.ELEVENLABS:
-            for vr in self.store.voice_refs.values():
+            for vid, vr in list(self.store.voice_refs.items()):
                 if vr.get("integration_id") == rec.id:
-                    vr["active"] = False
+                    updated = dict(vr)
+                    updated["active"] = False
+                    self.store.voice_refs[vid] = updated
         # keep record for audit but mark deleted
         self.store.integrations[provider] = rec
 
@@ -131,6 +133,7 @@ class IntegrationsService:
                 return decrypt_secret(rec.encrypted_api_key, self.settings.master_key)
             except ValueError:
                 rec.status = IntegrationStatus.INVALID
+                self.store.integrations[provider] = rec
                 if require:
                     raise IntegrationError(
                         f"{provider.value} key decrypt failed",
@@ -156,6 +159,7 @@ class IntegrationsService:
         rec = self.store.integrations.get(provider)
         if rec:
             rec.status = IntegrationStatus.INVALID
+            self.store.integrations[provider] = rec
 
     def _validate_orcarouter(self, api_key: str) -> dict[str, Any]:
         client = OrcaRouterClient(

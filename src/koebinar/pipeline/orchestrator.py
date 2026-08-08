@@ -7,6 +7,7 @@ from typing import Any, Optional
 from koebinar.config import Settings, get_settings
 from koebinar.crypto import generate_id
 from koebinar.integrations.service import IntegrationError, IntegrationsService
+from koebinar.jobs import JobQueue
 from koebinar.knowledge.service import KnowledgeService
 from koebinar.models import (
     ArtifactType,
@@ -58,6 +59,12 @@ class PipelineOrchestrator:
             http_client=http_client,
         )
         self.renderer = VideoRenderer(store=self.store, settings=self.settings)
+        self.jobs = JobQueue(self.store)
+
+    def _use_sync(self, req_sync: bool | None = None) -> bool:
+        if req_sync is not None:
+            return bool(req_sync)
+        return bool(self.settings.sync_pipeline)
 
     def create_webinar(self, req: WebinarCreateRequest) -> Webinar:
         wid = generate_id("web_")
@@ -75,8 +82,26 @@ class PipelineOrchestrator:
         )
         self.store.webinars[wid] = webinar
         if req.auto_run:
-            self.run_from(wid, PipelineStep.OUTLINE)
+            if self._use_sync(req.sync):
+                self.run_from(wid, PipelineStep.OUTLINE)
+            else:
+                self.enqueue_from(wid, PipelineStep.OUTLINE)
         return self.store.webinars[wid]
+
+    def enqueue_from(self, webinar_id: str, step: PipelineStep | str) -> Webinar:
+        """Enqueue pipeline run for the worker (does not execute steps here)."""
+        if isinstance(step, str):
+            try:
+                step = PipelineStep(step)
+            except ValueError as exc:
+                raise PipelineError(f"unknown step: {step}", code="invalid_step") from exc
+        w = self.get(webinar_id)
+        job = self.jobs.enqueue(webinar_id, step)
+        w.status = WebinarStatus.QUEUED
+        w.job_id = job.id
+        w.error = None
+        self.store.webinars[webinar_id] = w
+        return w
 
     def get(self, webinar_id: str) -> Webinar:
         w = self.store.webinars.get(webinar_id)
@@ -112,26 +137,41 @@ class PipelineOrchestrator:
             raise PipelineError(f"unknown step: {step}", code="invalid_step")
 
         w = self.get(webinar_id)
+        # Re-fetch and persist after each step so API polling sees progress
         w.status = WebinarStatus.RUNNING
+        self.store.webinars[webinar_id] = w
         start_idx = PIPELINE_ORDER.index(step)
         try:
             for s in PIPELINE_ORDER[start_idx:]:
+                w = self.get(webinar_id)
                 w.current_step = s
+                w.status = WebinarStatus.RUNNING
+                self.store.webinars[webinar_id] = w
                 self._run_step(w, s)
+                self.store.webinars[webinar_id] = w
+            w = self.get(webinar_id)
             w.status = WebinarStatus.COMPLETED
             w.error = None
         except (PipelineError, IntegrationError) as exc:
+            w = self.get(webinar_id)
             w.status = WebinarStatus.FAILED
             w.error = str(exc)
             self.store.webinars[webinar_id] = w
             raise
         except Exception as exc:
+            w = self.get(webinar_id)
             w.status = WebinarStatus.FAILED
             w.error = str(exc)
             self.store.webinars[webinar_id] = w
             raise PipelineError(str(exc), code="pipeline_failed", status_code=500) from exc
         self.store.webinars[webinar_id] = w
         return w
+
+    def run_step_async(self, webinar_id: str, step: PipelineStep | str, *, sync: bool | None = None) -> Webinar:
+        """Enqueue or run a step based on sync mode."""
+        if self._use_sync(sync):
+            return self.run_from(webinar_id, step)
+        return self.enqueue_from(webinar_id, step)
 
     def video_path(self, webinar_id: str) -> str:
         w = self.get(webinar_id)

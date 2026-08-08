@@ -36,6 +36,7 @@ def settings(tmp_dirs) -> Settings:
     s = Settings(
         data_dir=data,
         artifacts_dir=artifacts,
+        db_path=data / "test.db",
         pronunciation_dict_path=dict_path,
         master_key="test-master-key",
         allow_system_llm_key=False,
@@ -44,6 +45,10 @@ def settings(tmp_dirs) -> Settings:
         elevenlabs_api_key="",
         default_auth_token="mvp-token",
         confidence_threshold=0.7,
+        # Unit/E2E table tests run pipeline in-process by default.
+        sync_pipeline=True,
+        force_render_double=True,
+        remotion_project_dir=Path(__file__).resolve().parents[1] / "remotion",
     )
     s.ensure_dirs()
     return s
@@ -51,7 +56,7 @@ def settings(tmp_dirs) -> Settings:
 
 @pytest.fixture()
 def store(settings: Settings) -> Store:
-    st = Store(settings=settings)
+    st = Store(settings=settings, memory=False)
     set_store(st)
     return st
 

@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     artifacts_dir: Path = Path("artifacts")
     pronunciation_dict_path: Path = Path("data/pronunciation_dict.tsv")
 
+    # Durable metadata DB (SQLite). Empty string disables durability (memory-only).
+    db_path: Path = Path("storage/koebinar.db")
+
     # Master key for encrypting BYOK secrets (32-byte hex or passphrase)
     master_key: str = "koebinar-dev-master-key-change-me"
 
@@ -38,9 +41,24 @@ class Settings(BaseSettings):
     tts_model: str = "eleven_v3"
     prompt_version: str = "v1.0"
 
+    # Pipeline execution: True = run steps in API process (tests/dev).
+    # False = enqueue jobs for the worker process (local B-stack default).
+    sync_pipeline: bool = False
+
+    # Remotion
+    remotion_project_dir: Path = Path("remotion")
+    remotion_timeout_sec: float = 180.0
+    force_render_double: bool = False
+
+    # Worker
+    worker_poll_interval_sec: float = 0.25
+    worker_idle_exit: bool = False  # if True, worker exits when queue empty (tests)
+
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        if self.db_path and str(self.db_path):
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

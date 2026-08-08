@@ -22,7 +22,11 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     settings.ensure_dirs()
-    store = store or get_store()
+    if store is None:
+        from koebinar.storage import open_store
+
+        # Prefer durable store when db_path is set (B-stack)
+        store = open_store(settings) if settings.db_path else get_store()
     set_store(store)
 
     @asynccontextmanager
