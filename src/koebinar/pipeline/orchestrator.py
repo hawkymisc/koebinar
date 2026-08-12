@@ -77,6 +77,7 @@ class PipelineOrchestrator:
             template=req.template,
             style=req.style,
             voice_id=req.voice_id,
+            instructions=req.instructions,
             document_ids=list(req.document_ids),
             status=WebinarStatus.CREATED,
         )

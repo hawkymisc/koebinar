@@ -46,7 +46,7 @@ class GenerationSteps:
         )
 
     def _kb_context(self, webinar: Webinar, query: str) -> list[dict[str, Any]]:
-        hits = self.knowledge.search(query, document_ids=webinar.document_ids or None, top_k=10, top_n=5)
+        hits = self.knowledge.search(query, document_ids=webinar.document_ids, top_k=10, top_n=5)
         return [
             {
                 "chunk_id": ch.id,
@@ -75,6 +75,7 @@ class GenerationSteps:
                         "audience": webinar.audience,
                         "duration_min": webinar.duration_min,
                         "lang": webinar.lang.value,
+                        "operator_instructions": webinar.instructions,
                         "kb": kb,
                     },
                     ensure_ascii=False,
@@ -85,7 +86,16 @@ class GenerationSteps:
         if "sections" not in data:
             # normalize mock / partial
             data = self._fallback_outline(webinar, kb)
-        data["input_hash"] = input_hash({"theme": webinar.theme, "kb": kb})
+        data["input_hash"] = input_hash(
+            {
+                "theme": webinar.theme,
+                "audience": webinar.audience,
+                "duration_min": webinar.duration_min,
+                "lang": webinar.lang.value,
+                "operator_instructions": webinar.instructions,
+                "kb": kb,
+            }
+        )
         data["model_id"] = self.settings.llm_model
         data["prompt_version"] = self.settings.prompt_version
         return data
@@ -133,6 +143,7 @@ class GenerationSteps:
                     {
                         "slides": slides.get("slides"),
                         "lang": webinar.lang.value,
+                        "operator_instructions": webinar.instructions,
                         "kb": kb,
                     },
                     ensure_ascii=False,
@@ -156,7 +167,9 @@ class GenerationSteps:
         data["lang"] = webinar.lang.value
         data["model_id"] = self.settings.llm_model
         data["prompt_version"] = self.settings.prompt_version
-        data["input_hash"] = input_hash(slides)
+        data["input_hash"] = input_hash(
+            {"slides": slides, "operator_instructions": webinar.instructions, "kb": kb}
+        )
         return data
 
     def _call_json(self, messages: list[dict[str, str]], purpose: str) -> dict[str, Any]:
