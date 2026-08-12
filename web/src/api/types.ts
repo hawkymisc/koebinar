@@ -45,6 +45,7 @@ export interface Webinar {
   template: Template
   style: Style
   voice_id: string
+  instructions: string
   document_ids: string[]
   status: WebinarStatus
   current_step: PipelineStep | null
@@ -70,6 +71,7 @@ export interface WebinarCreateInput {
   template?: Template
   style?: Style
   voice_id?: string
+  instructions?: string
   document_ids?: string[]
   auto_run?: boolean
   sync?: boolean
@@ -82,6 +84,7 @@ export interface KnowledgeDocument {
   storage_uri: string
   status: 'pending' | 'indexed' | 'failed'
   chunk_count: number
+  metadata: Record<string, unknown>
   created_at: string
 }
 
@@ -89,6 +92,7 @@ export interface KnowledgeCreateInput {
   title: string
   source_type: SourceType
   content: string
+  metadata?: Record<string, unknown>
 }
 
 export interface Job {

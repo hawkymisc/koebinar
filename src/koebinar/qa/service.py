@@ -119,7 +119,7 @@ class QAService:
     def _answer(self, question: Question, webinar: Webinar) -> Answer:
         hits = self.knowledge.search(
             question.message,
-            document_ids=webinar.document_ids or None,
+            document_ids=webinar.document_ids,
             top_k=10,
             top_n=5,
         )

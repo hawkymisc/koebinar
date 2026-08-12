@@ -124,10 +124,16 @@ tests/           # unit + ≥100 E2E（モック）
 ```bash
 pytest tests -q --cov=koebinar --cov-branch --cov-report=term
 pytest tests/e2e -q
+
+cd web
+npm test
+PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium
+npm run test:e2e
 ```
 
 外部 LLM/TTS は **API 互換モック**（`tests/mocks/providers.py`）。実 API キー不要。  
 テスト既定は `sync_pipeline=True` + render double（高速・決定的）。
+Playwright E2EだけはローカルのAPI互換モックと**実Remotionレンダリング**を使い、資料アップロードからH.264 MP4のブラウザ再生まで検証する。
 
 ## 主要 API
 

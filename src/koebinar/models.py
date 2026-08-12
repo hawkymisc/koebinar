@@ -125,6 +125,7 @@ class KnowledgeDocument(BaseModel):
     storage_uri: str
     status: DocumentStatus
     chunk_count: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -144,6 +145,7 @@ class WebinarCreateRequest(BaseModel):
     template: Template = Template.TECH
     style: Style = Style.KEYNOTE
     voice_id: str = "default"
+    instructions: str = ""
     document_ids: list[str] = Field(default_factory=list)
     auto_run: bool = True
     # When True, force in-process run even if settings.sync_pipeline is False.
@@ -172,6 +174,7 @@ class Webinar(BaseModel):
     template: Template
     style: Style
     voice_id: str
+    instructions: str = ""
     document_ids: list[str] = Field(default_factory=list)
     status: WebinarStatus = WebinarStatus.CREATED
     current_step: Optional[PipelineStep] = None

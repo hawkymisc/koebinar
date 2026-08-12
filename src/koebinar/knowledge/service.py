@@ -40,6 +40,7 @@ class KnowledgeService:
             storage_uri=storage_uri,
             status=DocumentStatus.INDEXED if chunks else DocumentStatus.FAILED,
             chunk_count=len(chunks),
+            metadata=dict(req.metadata),
         )
         self.store.documents[doc_id] = doc
         self.store.chunks[doc_id] = chunks
