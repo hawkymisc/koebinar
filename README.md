@@ -90,6 +90,20 @@ cd remotion
 node render.mjs --props /path/props.json --output /tmp/out.mp4
 ```
 
+## Web UI（運用者コンソール + 視聴者Q&A）
+
+React（Vite）製。ウェビナー作成、進捗確認、台本編集、ステップ再実行、動画プレビュー、視聴者Q&Aを1画面で行う。
+
+```bash
+./scripts/start-web.sh
+# または
+cd web && npm install && npm run dev
+```
+
+`http://localhost:5173` を開く。API既定は `http://127.0.0.1:8000/api/v1`（`web/.env` の `VITE_API_BASE` で変更可）。認証トークンは画面右上の入力欄で設定（既定 `mvp-token`、`localStorage` に保存）。
+
+APIサーバー側は `CORSMiddleware`（`allow_origins=["*"]`, Bearerトークン運用でCookie未使用のため許容）でdevサーバーからのアクセスを許可している。
+
 ## 実装構成
 
 ```
@@ -100,7 +114,8 @@ src/koebinar/
   storage.py     # durable SQLite + FS artifacts
   knowledge/ integrations/ llm/ pipeline/ qa/
 remotion/        # Remotion project + render.mjs
-scripts/         # start-api / start-worker / start-stack
+web/             # 運用者コンソール + 視聴者Q&A（Vite + React + TypeScript）
+scripts/         # start-api / start-worker / start-stack / start-web
 tests/           # unit + ≥100 E2E（モック）
 ```
 
@@ -122,6 +137,7 @@ pytest tests/e2e -q
 | GET | `/api/v1/health/stack` | B スタック状態（db / jobs / sync フラグ） |
 | POST | `/api/v1/knowledge/documents` | 資料登録 |
 | POST | `/api/v1/webinars` | ジョブ作成（async/sync） |
+| GET | `/api/v1/webinars` | ウェビナー一覧（新しい順） |
 | GET | `/api/v1/webinars/{id}` | 状態・中間生成物 |
 | GET | `/api/v1/webinars/{id}/jobs` | 関連ジョブ一覧 |
 | GET | `/api/v1/jobs/{id}` | ジョブ詳細 |
@@ -137,5 +153,5 @@ pytest tests/e2e -q
 
 ## Version
 
-- App: 0.2.0 (B-stack + Remotion path)
+- App: 0.3.0 (B-stack + Remotion path + Web UI)
 - Spec docs: v1.5

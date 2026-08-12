@@ -109,6 +109,11 @@ class PipelineOrchestrator:
             raise PipelineError("webinar not found", code="not_found", status_code=404)
         return w
 
+    def list_webinars(self) -> list[Webinar]:
+        items = list(self.store.webinars.values())
+        items.sort(key=lambda w: w.created_at, reverse=True)
+        return items
+
     def patch_script(self, webinar_id: str, req: ScriptPatchRequest) -> Webinar:
         w = self.get(webinar_id)
         script = w.script or {"slides": []}

@@ -46,6 +46,27 @@ def test_knowledge_register_list_get(client: TestClient):
     assert got["title"] == "Spec"
 
 
+def test_webinar_list(client: TestClient):
+    r1 = client.post("/api/v1/webinars", json={"theme": "Webinar A", "auto_run": False})
+    assert r1.status_code == 200
+    r2 = client.post("/api/v1/webinars", json={"theme": "Webinar B", "auto_run": False})
+    assert r2.status_code == 200
+    w1, w2 = r1.json(), r2.json()
+
+    listed = client.get("/api/v1/webinars")
+    assert listed.status_code == 200
+    ids = [w["id"] for w in listed.json()]
+    assert w1["id"] in ids
+    assert w2["id"] in ids
+    # newest first
+    assert ids.index(w2["id"]) < ids.index(w1["id"])
+
+
+def test_webinar_list_requires_auth(client: TestClient):
+    r = client.get("/api/v1/webinars", headers={"Authorization": "Bearer wrong"})
+    assert r.status_code == 401
+
+
 def test_integrations_byok_flow_no_full_key_leak(client: TestClient, register_keys):
     orca, el = register_keys()
     assert VALID_ORCA_KEY not in str(orca)

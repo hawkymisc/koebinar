@@ -7,6 +7,7 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from koebinar.api.deps import AppState
 from koebinar.api.routes import build_router
@@ -37,6 +38,16 @@ def create_app(
             client.close()
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+    # MVP: single-tenant local tool, auth is via Bearer token (no cookies), so a
+    # permissive CORS policy lets the web UI dev server call the API without
+    # exposing session credentials.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     state = AppState(settings=settings, store=store, http_client=http_client)
     app.state.koebinar = state
     app.state.http_client = http_client

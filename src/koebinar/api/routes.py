@@ -63,6 +63,11 @@ def build_router() -> APIRouter:
             raise HTTPException(status_code=code, detail=str(exc)) from exc
         return w.model_dump(mode="json")
 
+    @router.get("/webinars", dependencies=[Depends(require_auth)])
+    def list_webinars(request: Request) -> list[dict[str, Any]]:
+        state = get_app_state(request)
+        return [w.model_dump(mode="json") for w in state.pipeline.list_webinars()]
+
     @router.get("/webinars/{webinar_id}", dependencies=[Depends(require_auth)])
     def get_webinar(webinar_id: str, request: Request) -> dict[str, Any]:
         state = get_app_state(request)
