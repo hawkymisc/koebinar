@@ -154,4 +154,4 @@ pytest tests/e2e -q
 ## Version
 
 - App: 0.3.0 (B-stack + Remotion path + Web UI)
-- Spec docs: v1.5
+- Spec docs: v1.6
