@@ -63,6 +63,11 @@ def build_router() -> APIRouter:
             raise HTTPException(status_code=code, detail=str(exc)) from exc
         return w.model_dump(mode="json")
 
+    @router.get("/webinars", dependencies=[Depends(require_auth)])
+    def list_webinars(request: Request) -> list[dict[str, Any]]:
+        state = get_app_state(request)
+        return [w.model_dump(mode="json") for w in state.pipeline.list_webinars()]
+
     @router.get("/webinars/{webinar_id}", dependencies=[Depends(require_auth)])
     def get_webinar(webinar_id: str, request: Request) -> dict[str, Any]:
         state = get_app_state(request)
@@ -82,14 +87,52 @@ def build_router() -> APIRouter:
         return w.model_dump(mode="json")
 
     @router.post("/webinars/{webinar_id}/steps/{step}/run", dependencies=[Depends(require_auth)])
-    def run_step(webinar_id: str, step: str, request: Request) -> dict[str, Any]:
+    def run_step(
+        webinar_id: str,
+        step: str,
+        request: Request,
+        sync: Optional[bool] = Query(default=None),
+    ) -> dict[str, Any]:
         state = get_app_state(request)
         try:
-            w = state.pipeline.run_from(webinar_id, step)
+            w = state.pipeline.run_step_async(webinar_id, step, sync=sync)
         except (PipelineError, IntegrationError) as exc:
             code = getattr(exc, "status_code", 400)
             raise HTTPException(status_code=code, detail=str(exc)) from exc
         return w.model_dump(mode="json")
+
+    @router.get("/webinars/{webinar_id}/jobs", dependencies=[Depends(require_auth)])
+    def list_jobs(webinar_id: str, request: Request) -> dict[str, Any]:
+        state = get_app_state(request)
+        try:
+            state.pipeline.get(webinar_id)
+        except PipelineError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        jobs = state.pipeline.jobs.list_for_webinar(webinar_id)
+        return {"jobs": [j.model_dump(mode="json") for j in jobs]}
+
+    @router.get("/jobs/{job_id}", dependencies=[Depends(require_auth)])
+    def get_job(job_id: str, request: Request) -> dict[str, Any]:
+        state = get_app_state(request)
+        job = state.pipeline.jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="job not found")
+        return job.model_dump(mode="json")
+
+    @router.get("/health/stack")
+    def health_stack(request: Request) -> dict[str, Any]:
+        """B-stack readiness: API + durable store + job queue stats."""
+        state = get_app_state(request)
+        stats = state.pipeline.jobs.stats()
+        return {
+            "status": "ok",
+            "service": "koebinar",
+            "sync_pipeline": state.settings.sync_pipeline,
+            "db_path": str(state.settings.db_path),
+            "artifacts_dir": str(state.settings.artifacts_dir),
+            "jobs": stats,
+            "remotion_project": str(state.settings.remotion_project_dir),
+        }
 
     @router.get("/webinars/{webinar_id}/video", dependencies=[Depends(require_auth)])
     def get_video(webinar_id: str, request: Request) -> Response:

@@ -15,6 +15,11 @@ venv/
 .env
 storage/
 artifacts/
+logs/
 *.mp4
 !tests/**/*.mp4
 .DS_Store
+remotion/node_modules/
+remotion/dist/
+remotion/out/
+*.props.json

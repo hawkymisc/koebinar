@@ -192,7 +192,9 @@ def test_script_no_reference_warning(settings: Settings, store: Store):
             False,
         )
     # LLM error non-401 does not mark invalid
-    store.integrations[Provider.ORCAROUTER].status = IntegrationStatus.ACTIVE
+    rec = store.integrations[Provider.ORCAROUTER]
+    rec.status = IntegrationStatus.ACTIVE
+    store.integrations[Provider.ORCAROUTER] = rec
     with respx.mock(assert_all_called=False) as r:
         r.post(url__regex=r".*/chat/completions").respond(500, text="err")
         with pytest.raises(LLMError):

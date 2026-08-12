@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "koebinar"
-version = "0.1.0"
+version = "0.3.0"
 description = "Koebinar — AI webinar agent (hackathon MVP)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 koebinar = "koebinar.main:cli"
+koebinar-worker = "koebinar.worker:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,0 +1,39 @@
+# Optional local B-stack (API + worker). Shared volume for SQLite + artifacts.
+# Usage: docker compose up --build
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "uvicorn", "koebinar.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      KOEBINAR_DATA_DIR: /data/storage
+      KOEBINAR_ARTIFACTS_DIR: /data/artifacts
+      KOEBINAR_DB_PATH: /data/storage/koebinar.db
+      KOEBINAR_SYNC_PIPELINE: "false"
+      KOEBINAR_REMOTION_PROJECT_DIR: /app/remotion
+      KOEBINAR_DEFAULT_AUTH_TOKEN: mvp-token
+    ports:
+      - "8000:8000"
+    volumes:
+      - koebinar-data:/data
+      - ./remotion:/app/remotion
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "koebinar.worker", "-v"]
+    environment:
+      KOEBINAR_DATA_DIR: /data/storage
+      KOEBINAR_ARTIFACTS_DIR: /data/artifacts
+      KOEBINAR_DB_PATH: /data/storage/koebinar.db
+      KOEBINAR_SYNC_PIPELINE: "false"
+      KOEBINAR_REMOTION_PROJECT_DIR: /app/remotion
+    volumes:
+      - koebinar-data:/data
+      - ./remotion:/app/remotion
+    depends_on:
+      - api
+
+volumes:
+  koebinar-data:

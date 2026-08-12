@@ -6,7 +6,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 文書バージョン | v1.5 |
+| 文書バージョン | v1.6 |
 | 作成日 | 2026-08-08 |
 | 対象フェーズ | ハッカソンMVP / Phase 1 |
 | 文書区分 | ハッカソン開発用 |
@@ -24,6 +24,7 @@
 | 1.3 | 2026-08-08 | ElevenLabs BYOK対応。Integrations API（キー登録/検証/削除、Voice一覧）、integrationsエンティティ（暗号化キー保存）、キー解決順序、検証フローを追加 | チーム（要記入） |
 | 1.4 | 2026-08-08 | OrcaRouterもBYOK化し、Integrations APIを`{provider}`共通化。キー解決順序を全プロバイダー共通ルールに統一 | チーム（要記入） |
 | 1.5 | 2026-08-08 | プロダクト名を「Koebinar（コエビナー）」に決定し全文書へ反映 | チーム（要記入） |
+| 1.6 | 2026-08-12 | Web UI資料アップロード仕様（PDF/PPTXをブラウザ内抽出、§2.1）、追加指示`instructions`とKB紐付け厳格化（§3.2）を追加。B-stack（永続SQLite/非同期worker/Remotion経路）とWeb UI実装の反映 | チーム（要記入） |
 
 ## 1. 仕様範囲・設計原則
 
@@ -57,6 +58,22 @@ flowchart LR
 ```
 
 *図1. ハッカソンMVP論理アーキテクチャ*
+
+### 2.1 資料アップロード仕様（Web UI、v1.6）
+
+運用者は資料をブラウザで直接アップロードする。**テキスト抽出はすべてクライアント側で完結させ、サーバーは抽出済みプレーンテキストのみを受け取る**（理由はNFR-07/AR-01・requirements.md OD-11参照）。
+
+| **形式** | **抽出方法** | **備考** |
+|---|---|---|
+| テキスト貼り付け / `.txt` / `.md` | そのまま送信 | 追加ライブラリ不要 |
+| PDF | `pdf.js`（ブラウザ内）でページ単位にテキスト抽出 | スキャン画像PDF（テキスト層なし）はOCR非対応で不可。ページ間は空行区切りで結合し、チャンク分割の境界に利用する |
+| PPTX | `JSZip` + `DOMParser`（ブラウザ内、いずれも追加の重量級依存なし）で `ppt/slides/slideN.xml` の `<a:t>` を抽出。スライド順は `presentation.xml` に従う | スピーカーノート（`ppt/notesSlides/`）も抽出し本文に含める |
+
+抽出結果は `POST /api/v1/knowledge/documents` に `source_type="text"` として送信し、`metadata` に `{original_format, filename}` を保存する（プロブナンス目的、既存スキーマ変更なし）。既存の `source_type=pdf/url` の擬似パーサ（`extract_text_from_pdf_payload` 等）はAPI直接呼び出し用として温存するが、Web UIはこの経路を使わない。
+
+アップロード制限: ファイルサイズ上限・PPTX展開後サイズ上限をクライアント側でチェックし、超過時は拒否する（zip bomb対策）。
+
+URL資料の取り込みはMVPスコープ外（requirements.md OD-10、SSRFリスクのため）。
 
 | **コンポーネント** | **責務** |
 |---|---|
@@ -96,6 +113,11 @@ daida-aiの6ステップ構成を流用し、Step 5-6をRemotionレンダリン�
 | 話法スタイル（casual/keynote/formal/humorous） | 台本生成プロンプトのプリセットとして採用 |
 
 ※ daida-aiプラグイン本体（Claude Code対話型、PPTX出力）はプロダクトには組み込まない。PPTX出力が必要な場合の代替経路としてのみ検討する。
+
+### 3.2 追加指示・資料の紐付け（v1.6）
+
+- **`Webinar.instructions`（任意, string）**: 作成時に運用者が自由記述で入力する追加指示・重視点。`Step 1（アウトライン生成）` と `Step 3（台本生成）` の両方でLLMへの入力に含める（`operator_instructions` フィールドとして、`<kb>` の未信頼データとは明確に区別する）。スライド生成（Step 2）はアウトラインからの機械的な変換のみのため対象外。ステップ単体再実行時も同じ`instructions`値を再利用する（Webinarレコードに永続化するため）。
+- **資料の紐付け厳格化**: `document_ids` は運用者が明示的に選択したものだけを対象とする。従来「未指定＝登録済み全資料を検索対象にする」実装だったが、複数ウェビナーを作るたびに資料が混ざる問題があるため撤廃する。`document_ids=[]`（0件選択）はKB根拠なしでの生成を意味し、台本の各スライドは`grounded=false`として扱われる（Step 3の既存フォールバック挙動をそのまま利用）。
 
 ## 4. OrcaRouter統合仕様
 
@@ -195,13 +217,15 @@ REST/JSON、`/api/v1`。認証はMVPでは簡易トークン。
 | GET | /api/v1/questions/{id} | 回答取得（ポーリング） |
 | GET | /api/v1/analytics/questions | 質問・Intent一覧、CSV/JSONエクスポート |
 
+`POST /api/v1/webinars` はv1.6で`instructions`（任意, string）を受け付ける。`document_ids`は明示的に選択したもののみを渡す（未指定/空配列＝KB根拠なしで生成、3.2参照）。新規エンドポイントは追加していない。
+
 ## 9. データモデル
 
 | **Entity** | **主要Field** |
 |---|---|
-| knowledge_documents | id, title, source_type, storage_uri, status |
+| knowledge_documents | id, title, source_type, storage_uri, status, metadata（`original_format`/`filename`等、v1.6でクライアント抽出資料のプロブナンスを保持） |
 | chunks | id, document_id, text, embedding_ref, section |
-| webinars | id, theme, audience, duration_min, lang, template, style, voice_ref, status, current_step |
+| webinars | id, theme, audience, duration_min, lang, template, style, voice_ref, status, current_step, **instructions**（v1.6追加、自由記述の追加指示） |
 | pipeline_artifacts | id, webinar_id, step, type(outline/slides/script/tts_script/audio/timeline/video), storage_uri, model_id, prompt_version, created_at |
 | integrations | id, provider(orcarouter/elevenlabs), encrypted_api_key, key_mask, status, validated_at, meta_json（EL: tier/character_count/character_limit等のプロバイダー固有情報） |
 | voice_refs | id, integration_id, provider(elevenlabs), voice_id, ref_audio_uri, consent_flag, is_system_fallback |
