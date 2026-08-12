@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
-  createQuestion,
   fetchVideoObjectUrl,
-  getQuestion,
   getWebinar,
   patchScript,
+  patchPublication,
   runStep,
 } from '../api/endpoints'
-import { PIPELINE_STEPS, type Question, type ScriptSlide, type Webinar } from '../api/types'
+import { PIPELINE_STEPS, type ScriptSlide, type Webinar } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
 
 const IN_FLIGHT_STATUSES = new Set(['queued', 'running'])
@@ -23,6 +22,8 @@ export function WebinarDetailPage() {
   const [savingScript, setSavingScript] = useState(false)
   const [runningStep, setRunningStep] = useState<string | null>(null)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [updatingPublication, setUpdatingPublication] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -86,6 +87,27 @@ export function WebinarDetailPage() {
     }
   }
 
+  async function handlePublication(published: boolean) {
+    if (!id) return
+    setUpdatingPublication(true)
+    try {
+      const updated = await patchPublication(id, published)
+      setWebinar(updated)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '公開状態を変更できませんでした')
+    } finally {
+      setUpdatingPublication(false)
+    }
+  }
+
+  async function copyViewerUrl() {
+    if (!id) return
+    await navigator.clipboard.writeText(`${window.location.origin}/watch/${id}`)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1800)
+  }
+
   if (error && !webinar) {
     return <p className="error-box">{error}</p>
   }
@@ -130,6 +152,47 @@ export function WebinarDetailPage() {
         </section>
       )}
 
+      {webinar.status === 'completed' && (
+        <section className={`card publication-card ${webinar.published_at ? 'is-published' : ''}`}>
+          <div>
+            <p className="publication-kicker">視聴者ページ</p>
+            <h3>{webinar.published_at ? '公開中です' : '視聴者への公開準備ができました'}</h3>
+            <p className="muted">
+              {webinar.published_at
+                ? 'このURLを知っている人は、動画の視聴と資料に基づく質問ができます。'
+                : '公開すると、APIトークンを表示しない専用の視聴ページが有効になります。'}
+            </p>
+          </div>
+          {webinar.published_at ? (
+            <div className="publication-actions">
+              <a className="btn btn-primary" href={`/watch/${webinar.id}`} target="_blank" rel="noreferrer">
+                視聴者ページを開く
+              </a>
+              <button className="btn" type="button" onClick={() => void copyViewerUrl()}>
+                {copied ? 'コピーしました' : 'URLをコピー'}
+              </button>
+              <button
+                className="btn"
+                type="button"
+                disabled={updatingPublication}
+                onClick={() => void handlePublication(false)}
+              >
+                公開を停止
+              </button>
+            </div>
+          ) : (
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={updatingPublication}
+              onClick={() => void handlePublication(true)}
+            >
+              {updatingPublication ? '公開中…' : '視聴者に公開する'}
+            </button>
+          )}
+        </section>
+      )}
+
       <section className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <h3>台本</h3>
@@ -164,90 +227,6 @@ export function WebinarDetailPage() {
         )}
       </section>
 
-      <QaWidget webinarId={webinar.id} />
     </div>
-  )
-}
-
-function QaWidget({ webinarId }: { webinarId: string }) {
-  const [message, setMessage] = useState('')
-  const [questions, setQuestions] = useState<Question[]>([])
-  const [sending, setSending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const pollers = useRef(new Set<string>())
-
-  function pollUntilAnswered(questionId: string) {
-    if (pollers.current.has(questionId)) return
-    pollers.current.add(questionId)
-    const timer = setInterval(async () => {
-      try {
-        const q = await getQuestion(questionId)
-        setQuestions((prev) => prev.map((p) => (p.id === q.id ? q : p)))
-        if (q.status !== 'pending') {
-          clearInterval(timer)
-          pollers.current.delete(questionId)
-        }
-      } catch (err) {
-        console.error('[QaWidget] polling answer failed:', err)
-        clearInterval(timer)
-        pollers.current.delete(questionId)
-        setError(err instanceof ApiError ? err.message : '回答の取得に失敗しました')
-      }
-    }, POLL_INTERVAL_MS)
-  }
-
-  async function handleAsk(e: React.FormEvent) {
-    e.preventDefault()
-    if (!message.trim()) return
-    setSending(true)
-    setError(null)
-    try {
-      const q = await createQuestion(webinarId, message)
-      setQuestions((prev) => [q, ...prev])
-      setMessage('')
-      if (q.status === 'pending') pollUntilAnswered(q.id)
-    } catch (err) {
-      console.error('[QaWidget] question submit failed:', err)
-      setError(err instanceof ApiError ? err.message : '質問の送信に失敗しました')
-    } finally {
-      setSending(false)
-    }
-  }
-
-  return (
-    <section className="card">
-      <h3>視聴者Q&amp;A</h3>
-      {error && <p className="error-box">{error}</p>}
-      <form onSubmit={handleAsk} className="row">
-        <input
-          style={{ flex: 1 }}
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          placeholder="資料の内容について質問する"
-        />
-        <button className="btn btn-primary" type="submit" disabled={sending}>
-          質問する
-        </button>
-      </form>
-      <div className="qa-thread" style={{ marginTop: 12 }}>
-        {questions.map((q) => (
-          <div className="qa-item" key={q.id}>
-            <p>
-              <strong>Q.</strong> {q.message}
-            </p>
-            {q.status === 'pending' && <p className="muted">回答を生成中…</p>}
-            {q.answer && (
-              <p>
-                <strong>A.</strong> {q.answer.text}
-                <span className="muted"> (confidence: {q.answer.confidence.toFixed(2)})</span>
-              </p>
-            )}
-            {q.status === 'held' && !q.answer && (
-              <p className="muted">根拠が不十分なため回答を保留しています。</p>
-            )}
-          </div>
-        ))}
-      </div>
-    </section>
   )
 }

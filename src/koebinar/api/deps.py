@@ -8,11 +8,12 @@ from typing import Optional
 import httpx
 from fastapi import Header, HTTPException, Request
 
-from koebinar.config import Settings, get_settings
+from koebinar.config import Settings
 from koebinar.integrations.service import IntegrationsService
 from koebinar.knowledge.service import KnowledgeService
 from koebinar.pipeline.orchestrator import PipelineOrchestrator
 from koebinar.qa.service import QAService
+from koebinar.rate_limit import RateLimiter
 from koebinar.storage import Store, get_store
 
 
@@ -25,6 +26,7 @@ class AppState:
     integrations: IntegrationsService = field(init=False)
     pipeline: PipelineOrchestrator = field(init=False)
     qa: QAService = field(init=False)
+    public_qa_limiter: RateLimiter = field(default_factory=RateLimiter)
 
     def __post_init__(self) -> None:
         self.knowledge = KnowledgeService(store=self.store)
@@ -48,11 +50,14 @@ def get_app_state(request: Request) -> AppState:
 
 
 def require_auth(
+    request: Request,
     authorization: Optional[str] = Header(default=None),
     x_api_token: Optional[str] = Header(default=None),
 ) -> None:
     # Do not accept Settings as a FastAPI param (it would be treated as a body model).
-    settings = get_settings()
+    settings = get_app_state(request).settings
+    if not settings.default_auth_token:
+        raise HTTPException(status_code=503, detail="operator authentication is not configured")
     token = None
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()

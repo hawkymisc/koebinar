@@ -3,6 +3,7 @@ import type {
   Job,
   KnowledgeCreateInput,
   KnowledgeDocument,
+  PublicWebinar,
   Question,
   ScriptSlide,
   Webinar,
@@ -15,6 +16,21 @@ export function listWebinars(): Promise<Webinar[]> {
 
 export function getWebinar(id: string): Promise<Webinar> {
   return apiRequest<Webinar>(`/webinars/${id}`)
+}
+
+export function patchPublication(id: string, published: boolean): Promise<Webinar> {
+  return apiRequest<Webinar>(`/webinars/${id}/publication`, {
+    method: 'PATCH',
+    body: { published },
+  })
+}
+
+export function getPublicWebinar(id: string): Promise<PublicWebinar> {
+  return apiRequest<PublicWebinar>(`/public/webinars/${id}`, { auth: false })
+}
+
+export function publicVideoUrl(id: string): string {
+  return `${API_BASE}/public/webinars/${id}/video`
 }
 
 export function createWebinar(input: WebinarCreateInput): Promise<Webinar> {
@@ -52,6 +68,20 @@ export function createQuestion(webinarId: string, message: string): Promise<Ques
 
 export function getQuestion(id: string): Promise<Question> {
   return apiRequest<Question>(`/questions/${id}`, { auth: false })
+}
+
+export function createPublicQuestion(webinarId: string, message: string): Promise<Question> {
+  return apiRequest<Question>(`/public/webinars/${webinarId}/questions`, {
+    method: 'POST',
+    body: { message },
+    auth: false,
+  })
+}
+
+export function getPublicQuestion(webinarId: string, questionId: string): Promise<Question> {
+  return apiRequest<Question>(`/public/webinars/${webinarId}/questions/${questionId}`, {
+    auth: false,
+  })
 }
 
 export async function fetchVideoObjectUrl(id: string): Promise<string> {

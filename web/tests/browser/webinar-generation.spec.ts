@@ -22,6 +22,9 @@ test('資料投入から生成済みMP4の再生まで完遂する', async ({ pa
   })
   expect(elevenlabs.ok()).toBeTruthy()
 
+  await page.addInitScript(() => {
+    window.localStorage.setItem('koebinar.apiToken', 'mvp-token')
+  })
   await page.goto('/')
   await page.getByLabel('資料ファイル').setInputFiles('../tests/fixtures/e2e-knowledge.txt')
   const uploaded = page.getByLabel(/e2e-knowledge\.txt/)
@@ -63,9 +66,22 @@ test('資料投入から生成済みMP4の再生まで完遂する', async ({ pa
 
   const webinarId = new URL(page.url()).pathname.split('/').at(-1)
   expect(webinarId).toBeTruthy()
+
+  await page.getByRole('button', { name: '視聴者に公開する' }).click()
+  await expect(page.getByRole('heading', { name: '公開中です' })).toBeVisible()
+  await page.goto(`/watch/${webinarId}`)
+  await expect(page.getByRole('heading', { name: '厳格完了判定 E2E' })).toBeVisible()
+  await expect(page.getByLabel('ウェビナー動画')).toBeVisible()
+  await expect(page.getByText('APIトークン')).toHaveCount(0)
+  await page.getByLabel('質問を入力').fill('Koebinarは何からウェビナー動画を生成しますか？')
+  await page.getByRole('button', { name: 'AIに質問する' }).click()
+  await expect(page.getByText('KOEBINAR AI')).toBeVisible()
+  await expect(page.getByText('e2e-knowledge.txt')).toBeVisible()
+
   const persisted = await request.get(`${API_BASE}/webinars/${webinarId}`, { headers: AUTH })
   expect(persisted.ok()).toBeTruthy()
   const webinar = await persisted.json()
+  expect(webinar.published_at).toBeTruthy()
   expect(webinar.instructions).toBe('結論を先に示し、選択資料だけを根拠にする')
   expect(webinar.document_ids).toHaveLength(1)
   const videoArtifact = webinar.artifacts.find((artifact: { type: string }) => artifact.type === 'video')

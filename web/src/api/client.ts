@@ -14,7 +14,7 @@ export class ApiError extends Error {
 }
 
 export function getToken(): string {
-  return localStorage.getItem(TOKEN_STORAGE_KEY) ?? 'mvp-token'
+  return localStorage.getItem(TOKEN_STORAGE_KEY) ?? ''
 }
 
 export function setToken(token: string): void {
@@ -31,7 +31,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const { method = 'GET', body, auth = true } = options
   const headers: Record<string, string> = {}
   if (auth) {
-    headers.Authorization = `Bearer ${getToken()}`
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
   }
   let payload: string | undefined
   if (body !== undefined) {

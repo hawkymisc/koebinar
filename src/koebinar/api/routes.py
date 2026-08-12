@@ -13,10 +13,13 @@ from koebinar.integrations.service import IntegrationError
 from koebinar.models import (
     IntegrationRegisterRequest,
     KnowledgeCreateRequest,
+    PublicationPatchRequest,
     Provider,
     QuestionCreateRequest,
     ScriptPatchRequest,
+    ViewerQuestionCreateRequest,
     WebinarCreateRequest,
+    WebinarStatus,
 )
 from koebinar.pipeline.orchestrator import PipelineError
 
@@ -73,6 +76,17 @@ def build_router() -> APIRouter:
         state = get_app_state(request)
         try:
             w = state.pipeline.get(webinar_id)
+        except PipelineError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return w.model_dump(mode="json")
+
+    @router.patch("/webinars/{webinar_id}/publication", dependencies=[Depends(require_auth)])
+    def patch_publication(
+        webinar_id: str, body: PublicationPatchRequest, request: Request
+    ) -> dict[str, Any]:
+        state = get_app_state(request)
+        try:
+            w = state.pipeline.patch_publication(webinar_id, body)
         except PipelineError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         return w.model_dump(mode="json")
@@ -144,7 +158,113 @@ def build_router() -> APIRouter:
         p = Path(path)
         if not p.exists():
             raise HTTPException(status_code=404, detail="video file missing")
-        return FileResponse(path, media_type="video/mp4", filename="webinar.mp4")
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            filename="webinar.mp4",
+            headers={"Cache-Control": "private, no-store"},
+        )
+
+    # --- Public viewer ---
+    def get_published_webinar(webinar_id: str, request: Request):
+        state = get_app_state(request)
+        try:
+            webinar = state.pipeline.get(webinar_id)
+        except PipelineError as exc:
+            raise HTTPException(status_code=404, detail="webinar not found") from exc
+        if webinar.status != WebinarStatus.COMPLETED or webinar.published_at is None:
+            raise HTTPException(status_code=404, detail="webinar not found")
+        return state, webinar
+
+    def public_question_view(state: AppState, webinar, question) -> dict[str, Any]:
+        answer = None
+        if question.answer is not None and question.status.value != "failed":
+            citations = []
+            for item in question.answer.citations:
+                if item.document_id not in webinar.document_ids:
+                    continue
+                citation = item.model_dump(mode="json")
+                document = state.store.documents.get(item.document_id)
+                citation["source_title"] = document.title if document else "参照資料"
+                citations.append(citation)
+            answer = {
+                "text": question.answer.text,
+                "confidence": question.answer.confidence,
+                "answerability": question.answer.answerability.value,
+                "citations": citations,
+            }
+        return {
+            "id": question.id,
+            "message": question.message,
+            "status": question.status.value,
+            "created_at": question.model_dump(mode="json")["created_at"],
+            "answer": answer,
+        }
+
+    @router.get("/public/webinars/{webinar_id}")
+    def get_public_webinar(webinar_id: str, request: Request) -> dict[str, Any]:
+        _, webinar = get_published_webinar(webinar_id, request)
+        return {
+            "id": webinar.id,
+            "theme": webinar.theme,
+            "audience": webinar.audience,
+            "duration_min": webinar.duration_min,
+            "lang": webinar.lang.value,
+            "template": webinar.template.value,
+            "published_at": webinar.model_dump(mode="json")["published_at"],
+        }
+
+    @router.get("/public/webinars/{webinar_id}/video")
+    def get_public_video(webinar_id: str, request: Request) -> Response:
+        state, _ = get_published_webinar(webinar_id, request)
+        try:
+            path = state.pipeline.video_path(webinar_id)
+        except PipelineError as exc:
+            raise HTTPException(status_code=404, detail="video not found") from exc
+        if not Path(path).exists():
+            raise HTTPException(status_code=404, detail="video not found")
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            filename="webinar.mp4",
+            headers={"Cache-Control": "private, no-store"},
+        )
+
+    @router.post("/public/webinars/{webinar_id}/questions")
+    def create_public_question(
+        webinar_id: str, body: ViewerQuestionCreateRequest, request: Request
+    ) -> dict[str, Any]:
+        state, webinar = get_published_webinar(webinar_id, request)
+        if not body.message.strip():
+            raise HTTPException(status_code=422, detail="message required")
+        client_host = request.client.host if request.client else "unknown"
+        if not state.public_qa_limiter.allow(
+            f"{client_host}:{webinar_id}",
+            limit=state.settings.public_qa_rate_limit,
+            window_seconds=state.settings.public_qa_rate_window_sec,
+        ):
+            raise HTTPException(
+                status_code=429,
+                detail="too many questions; please wait and try again",
+                headers={"Retry-After": str(state.settings.public_qa_rate_window_sec)},
+            )
+        try:
+            question = state.qa.ask(
+                QuestionCreateRequest(webinar_id=webinar_id, message=body.message.strip())
+            )
+        except IntegrationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return public_question_view(state, webinar, question)
+
+    @router.get("/public/webinars/{webinar_id}/questions/{question_id}")
+    def get_public_question(
+        webinar_id: str, question_id: str, request: Request
+    ) -> dict[str, Any]:
+        state, webinar = get_published_webinar(webinar_id, request)
+        question = state.qa.get(question_id)
+        if question is None or question.webinar_id != webinar_id:
+            raise HTTPException(status_code=404, detail="question not found")
+        return public_question_view(state, webinar, question)
 
     # --- Integrations ---
     @router.post("/integrations/{provider}", dependencies=[Depends(require_auth)])
@@ -193,9 +313,8 @@ def build_router() -> APIRouter:
         return {"voices": [v.model_dump(mode="json") for v in voices]}
 
     # --- Questions ---
-    @router.post("/questions")
+    @router.post("/questions", dependencies=[Depends(require_auth)])
     def create_question(body: QuestionCreateRequest, request: Request) -> dict[str, Any]:
-        # viewers may post without operator token in MVP widget path — still simple
         state = get_app_state(request)
         if not body.message or not body.webinar_id:
             raise HTTPException(status_code=422, detail="webinar_id and message required")
@@ -207,7 +326,7 @@ def build_router() -> APIRouter:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         return q.model_dump(mode="json")
 
-    @router.get("/questions/{question_id}")
+    @router.get("/questions/{question_id}", dependencies=[Depends(require_auth)])
     def get_question(question_id: str, request: Request) -> dict[str, Any]:
         state = get_app_state(request)
         q = state.qa.get(question_id)

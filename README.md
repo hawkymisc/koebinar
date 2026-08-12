@@ -35,6 +35,7 @@ cd remotion && npm install && cd ..
 ### 2. 一括起動（API + Worker）
 
 ```bash
+export KOEBINAR_DEFAULT_AUTH_TOKEN="$(openssl rand -hex 24)"
 ./scripts/start-stack.sh
 # 別ターミナルで:
 curl -s http://127.0.0.1:8000/api/v1/health/stack
@@ -65,7 +66,9 @@ docker compose up --build
 | `KOEBINAR_SYNC_PIPELINE` | `false`（スタック時） | `true` で API 内同期実行（テスト向け） |
 | `KOEBINAR_REMOTION_PROJECT_DIR` | `remotion` | Remotion プロジェクト |
 | `KOEBINAR_FORCE_RENDER_DOUBLE` | `false` | `true` で Remotion を使わず double |
-| `KOEBINAR_DEFAULT_AUTH_TOKEN` | `mvp-token` | Bearer トークン |
+| `KOEBINAR_DEFAULT_AUTH_TOKEN` | なし（必須） | 運用者用Bearerトークン。公開フロントへ埋め込まない秘密値 |
+| `KOEBINAR_PUBLIC_QA_RATE_LIMIT` | `10` | 視聴者IP・ウェビナーごとのQ&A回数上限 |
+| `KOEBINAR_PUBLIC_QA_RATE_WINDOW_SEC` | `60` | Q&A回数制限の時間窓（秒） |
 | `KOEBINAR_MASTER_KEY` | dev 用 | BYOK 暗号化マスタ |
 
 ### 4. 非同期フロー
@@ -90,9 +93,9 @@ cd remotion
 node render.mjs --props /path/props.json --output /tmp/out.mp4
 ```
 
-## Web UI（運用者コンソール + 視聴者Q&A）
+## Web UI（運用者コンソール + 公開視聴ページ）
 
-React（Vite）製。ウェビナー作成、進捗確認、台本編集、ステップ再実行、動画プレビュー、視聴者Q&Aを1画面で行う。
+React（Vite）製。運用者コンソールではウェビナー作成、進捗確認、台本編集、ステップ再実行、動画プレビュー、公開操作を行う。完成後に明示的に公開すると、APIトークンを表示しない `/watch/{id}` の視聴者専用ページで動画再生と根拠付きQ&Aを利用できる。
 
 ```bash
 ./scripts/start-web.sh
@@ -100,7 +103,7 @@ React（Vite）製。ウェビナー作成、進捗確認、台本編集、ス�
 cd web && npm install && npm run dev
 ```
 
-`http://localhost:5173` を開く。API既定は `http://127.0.0.1:8000/api/v1`（`web/.env` の `VITE_API_BASE` で変更可）。認証トークンは画面右上の入力欄で設定（既定 `mvp-token`、`localStorage` に保存）。
+起動前に `KOEBINAR_DEFAULT_AUTH_TOKEN` を推測困難な秘密値に設定する。`http://localhost:5173` を開き、同じ値を画面右上の入力欄に設定する（`localStorage` に保存）。API既定は `http://127.0.0.1:8000/api/v1`（`web/.env` の `VITE_API_BASE` で変更可）。トークンに既定値はなく、公開フロントのJavaScriptには埋め込まれない。
 
 APIサーバー側は `CORSMiddleware`（`allow_origins=["*"]`, Bearerトークン運用でCookie未使用のため許容）でdevサーバーからのアクセスを許可している。
 
@@ -150,12 +153,18 @@ Playwright E2EだけはローカルのAPI互換モックと**実Remotionレン�
 | PATCH | `/api/v1/webinars/{id}/script` | 台本修正 |
 | POST | `/api/v1/webinars/{id}/steps/{step}/run` | ステップ再実行（`?sync=` 可） |
 | GET | `/api/v1/webinars/{id}/video` | MP4 取得 |
+| PATCH | `/api/v1/webinars/{id}/publication` | 視聴者ページの公開・停止 |
+| GET | `/api/v1/public/webinars/{id}` | 公開ウェビナーの最小メタデータ（認証不要） |
+| GET | `/api/v1/public/webinars/{id}/video` | 公開MP4（認証不要） |
+| POST/GET | `/api/v1/public/webinars/{id}/questions` | 公開ページの質問・回答（認証不要） |
 | POST/GET/DELETE | `/api/v1/integrations/{provider}` | BYOK |
 | GET | `/api/v1/integrations/elevenlabs/voices` | Voice 一覧 |
-| POST/GET | `/api/v1/questions` | 視聴者 Q&A |
+| POST/GET | `/api/v1/questions` | 運用者用 Q&A（認証必須） |
 | GET | `/api/v1/analytics/questions` | 質問エクスポート |
 
-認証: `Authorization: Bearer mvp-token`
+運用者API認証: `Authorization: Bearer <KOEBINAR_DEFAULT_AUTH_TOKEN>`
+
+公開Q&Aの回数制限は、APIが認識するクライアントIPとウェビナーIDを単位にする。リバースプロキシ配下では、Uvicornの `--forwarded-allow-ips` に実際のプロキシIPだけを設定すること。無条件に転送ヘッダーを信頼しない。
 
 ## Version
 

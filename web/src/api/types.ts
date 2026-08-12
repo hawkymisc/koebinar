@@ -54,6 +54,17 @@ export interface Webinar {
   artifacts: PipelineArtifact[]
   script: { slides: ScriptSlide[]; manually_edited?: boolean } | null
   job_id: string | null
+  published_at: string | null
+}
+
+export interface PublicWebinar {
+  id: string
+  theme: string
+  audience: string
+  duration_min: number
+  lang: Lang
+  template: Template
+  published_at: string
 }
 
 export interface ScriptSlide {
@@ -110,6 +121,7 @@ export interface Citation {
   document_id: string
   chunk_id: string
   score: number
+  source_title?: string
 }
 
 export interface Answer {
