@@ -209,15 +209,20 @@ REST/JSON、`/api/v1`。認証はMVPでは簡易トークン。
 | PATCH | /api/v1/webinars/{id}/script | 台本修正 |
 | POST | /api/v1/webinars/{id}/steps/{step}/run | 指定ステップから再実行 |
 | GET | /api/v1/webinars/{id}/video | MP4取得/署名URL |
+| PATCH | /api/v1/webinars/{id}/publication | 完成ウェビナーの公開・公開停止（運用者認証必須） |
+| GET | /api/v1/public/webinars/{id} | 公開済みウェビナーの視聴用メタデータ（認証不要、運用情報を除外） |
+| GET | /api/v1/public/webinars/{id}/video | 公開済みウェビナーのMP4（認証不要） |
+| POST | /api/v1/public/webinars/{id}/questions | 公開済みウェビナーへの視聴者質問（認証不要） |
+| GET | /api/v1/public/webinars/{id}/questions/{question_id} | 公開ページの回答取得（認証不要、ウェビナー所属を検証） |
 | POST | /api/v1/integrations/{provider} | キー登録（provider: orcarouter / elevenlabs。登録時検証を実行し、検証結果・警告を返す） |
 | GET | /api/v1/integrations | 全プロバイダーの接続状態取得（キーはマスク表示、検証日時、ELはtier・残量含む） |
 | DELETE | /api/v1/integrations/{provider} | キー削除（ELは関連voice_refs無効化） |
 | GET | /api/v1/integrations/elevenlabs/voices | ElevenLabs登録キーのアカウントのVoice一覧取得 |
-| POST | /api/v1/questions | 視聴者質問 |
-| GET | /api/v1/questions/{id} | 回答取得（ポーリング） |
+| POST | /api/v1/questions | 運用者用の質問作成（簡易トークン必須） |
+| GET | /api/v1/questions/{id} | 運用者用の回答取得（簡易トークン必須） |
 | GET | /api/v1/analytics/questions | 質問・Intent一覧、CSV/JSONエクスポート |
 
-`POST /api/v1/webinars` はv1.6で`instructions`（任意, string）を受け付ける。`document_ids`は明示的に選択したもののみを渡す（未指定/空配列＝KB根拠なしで生成、3.2参照）。新規エンドポイントは追加していない。
+`POST /api/v1/webinars` はv1.6で`instructions`（任意, string）を受け付ける。`document_ids`は明示的に選択したもののみを渡す（未指定/空配列＝KB根拠なしで生成、3.2参照）。視聴者ページは完成後の明示的な公開操作を必須とし、公開APIからはvoice_id、instructions、document_ids、script、artifacts等の運用情報を返さない。
 
 ## 9. データモデル
 
@@ -251,6 +256,9 @@ REST/JSON、`/api/v1`。認証はMVPでは簡易トークン。
 ## 11. セキュリティ仕様（MVP最小）
 
 - システム保有キー（OrcaRouter/フォールバックTTS）は環境変数管理。リポジトリへのコミット禁止（gitleaks等をCIに追加推奨）。
+- 運用者トークンに既定値を設けず、起動時の環境変数で必須設定する。公開Webバンドルへトークンを埋め込まない。
+- 公開Q&AはクライアントIP＋ウェビナー単位で回数制限する。単一プロセスMVPのインメモリ制限であり、水平分散時は共有ストア型limiterへ置き換える。
+- 公開Q&AのIPはASGIサーバーが確定した `request.client` を使う。リバースプロキシ配下ではUvicornの `--forwarded-allow-ips` を実際のプロキシIPだけに設定する。未設定の共有プロキシ配下では全視聴者が同一IP扱いになるため、直公開または信頼済みプロキシ設定をMVPの前提とする。
 - 持ち込みキー（OrcaRouter / ElevenLabs）はいずれもアプリ層暗号化でDB保存。平文ログ・フロント返却を禁止し、マスク表示（末尾4桁）のみ。外部API呼び出しは必ずバックエンドから行い、キーをブラウザへ渡さない。
 - 参照音声のアップロードは同意フラグ必須。生成動画にAI生成表記を焼き込む。
 - KB由来テキストはuntrusted dataとしてプロンプト内で明示的に区切る。OrcaRouterのガードレールを併用する。

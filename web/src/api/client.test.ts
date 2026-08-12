@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, apiRequest, getToken, setToken } from './client'
+import { createPublicQuestion, getPublicWebinar } from './endpoints'
 
 function mockFetchOnce(body: unknown, init: { status?: number; ok?: boolean } = {}) {
   const status = init.status ?? 200
@@ -54,5 +55,31 @@ describe('apiRequest', () => {
   it('persists the token across getToken/setToken', () => {
     setToken('custom-token')
     expect(getToken()).toBe('custom-token')
+  })
+
+  it('does not invent or send an operator token when none is configured', async () => {
+    localStorage.clear()
+    mockFetchOnce([])
+    await apiRequest('/webinars')
+    expect(getToken()).toBe('')
+
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    const [, options] = fetchMock.mock.calls[0]
+    expect((options.headers as Record<string, string>).Authorization).toBeUndefined()
+  })
+
+  it('does not send the operator token to public viewer endpoints', async () => {
+    mockFetchOnce({ id: 'web_public', theme: 'Public webinar' })
+    await getPublicWebinar('web_public')
+
+    let fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    let [, options] = fetchMock.mock.calls[0]
+    expect((options.headers as Record<string, string>).Authorization).toBeUndefined()
+
+    mockFetchOnce({ id: 'q_public', status: 'pending' })
+    await createPublicQuestion('web_public', '質問です')
+    fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    ;[, options] = fetchMock.mock.calls[0]
+    expect((options.headers as Record<string, string>).Authorization).toBeUndefined()
   })
 })

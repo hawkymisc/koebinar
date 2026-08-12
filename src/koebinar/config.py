@@ -34,7 +34,12 @@ class Settings(BaseSettings):
 
     confidence_threshold: float = 0.7
     fps: int = 30
-    default_auth_token: str = "mvp-token"
+    # Required for operator APIs. No default: a public web bundle must not reveal it.
+    default_auth_token: str = ""
+
+    # Anonymous viewer Q&A abuse guard (per client IP + webinar, per process).
+    public_qa_rate_limit: int = 10
+    public_qa_rate_window_sec: int = 60
 
     # LLM / TTS model defaults
     llm_model: str = "adaptive"

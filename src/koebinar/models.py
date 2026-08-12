@@ -183,10 +183,15 @@ class Webinar(BaseModel):
     artifacts: list[PipelineArtifact] = Field(default_factory=list)
     script: Optional[dict[str, Any]] = None
     job_id: Optional[str] = None
+    published_at: Optional[datetime] = None
 
 
 class ScriptPatchRequest(BaseModel):
     slides: list[dict[str, Any]]
+
+
+class PublicationPatchRequest(BaseModel):
+    published: bool
 
 
 class IntegrationRegisterRequest(BaseModel):
@@ -213,6 +218,10 @@ class VoiceInfo(BaseModel):
 class QuestionCreateRequest(BaseModel):
     webinar_id: str
     message: str
+
+
+class ViewerQuestionCreateRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
 
 
 class Citation(BaseModel):

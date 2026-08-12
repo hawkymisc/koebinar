@@ -14,10 +14,12 @@ from koebinar.models import (
     PIPELINE_ORDER,
     PipelineArtifact,
     PipelineStep,
+    PublicationPatchRequest,
     ScriptPatchRequest,
     Webinar,
     WebinarCreateRequest,
     WebinarStatus,
+    utcnow,
 )
 from koebinar.pipeline.renderer import VideoRenderer
 from koebinar.pipeline.steps import GenerationSteps
@@ -98,6 +100,7 @@ class PipelineOrchestrator:
                 raise PipelineError(f"unknown step: {step}", code="invalid_step") from exc
         w = self.get(webinar_id)
         job = self.jobs.enqueue(webinar_id, step)
+        w.published_at = None
         w.status = WebinarStatus.QUEUED
         w.job_id = job.id
         w.error = None
@@ -115,11 +118,24 @@ class PipelineOrchestrator:
         items.sort(key=lambda w: w.created_at, reverse=True)
         return items
 
+    def patch_publication(self, webinar_id: str, req: PublicationPatchRequest) -> Webinar:
+        w = self.get(webinar_id)
+        if req.published and w.status != WebinarStatus.COMPLETED:
+            raise PipelineError(
+                "completed webinar required",
+                code="not_completed",
+                status_code=409,
+            )
+        w.published_at = utcnow() if req.published else None
+        self.store.webinars[webinar_id] = w
+        return w
+
     def patch_script(self, webinar_id: str, req: ScriptPatchRequest) -> Webinar:
         w = self.get(webinar_id)
         script = w.script or {"slides": []}
         script = {**script, "slides": req.slides, "manually_edited": True}
         w.script = script
+        w.published_at = None
         # persist script artifact
         uri = self.store.write_json(webinar_id, "script.json", script)
         self._upsert_artifact(
@@ -143,6 +159,7 @@ class PipelineOrchestrator:
             raise PipelineError(f"unknown step: {step}", code="invalid_step")
 
         w = self.get(webinar_id)
+        w.published_at = None
         # Re-fetch and persist after each step so API polling sees progress
         w.status = WebinarStatus.RUNNING
         self.store.webinars[webinar_id] = w

@@ -158,9 +158,20 @@ class QAService:
         llm_answer = self._llm_answer(question.message, context, lang)
         raw_text = str(llm_answer.get("answer_text") or llm_answer.get("answer") or "")
         raw_conf = float(llm_answer.get("confidence") if llm_answer.get("confidence") is not None else retrieval_conf)
-        raw_cites = llm_answer.get("citations") or [
-            {"document_id": c.document_id, "chunk_id": c.chunk_id, "score": c.score} for c in citations
-        ]
+        retrieved_citations = {(c.document_id, c.chunk_id): c for c in citations}
+        claimed_citations = llm_answer.get("citations")
+        if claimed_citations is None:
+            raw_cites = list(retrieved_citations.values())
+        else:
+            raw_cites = []
+            for claimed in claimed_citations:
+                if not isinstance(claimed, dict):
+                    continue
+                key = (str(claimed.get("document_id") or ""), str(claimed.get("chunk_id") or ""))
+                retrieved = retrieved_citations.get(key)
+                if retrieved is not None:
+                    # Retrieval, not the untrusted model, owns the evidence score.
+                    raw_cites.append(retrieved)
         text, conf, ability, cites = gate_answer(
             answer_text=raw_text,
             confidence=raw_conf,

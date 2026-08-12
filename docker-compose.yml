@@ -12,7 +12,7 @@ services:
       KOEBINAR_DB_PATH: /data/storage/koebinar.db
       KOEBINAR_SYNC_PIPELINE: "false"
       KOEBINAR_REMOTION_PROJECT_DIR: /app/remotion
-      KOEBINAR_DEFAULT_AUTH_TOKEN: mvp-token
+      KOEBINAR_DEFAULT_AUTH_TOKEN: ${KOEBINAR_DEFAULT_AUTH_TOKEN:?Set a private operator token}
     ports:
       - "8000:8000"
     volumes:

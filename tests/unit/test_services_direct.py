@@ -2,18 +2,24 @@
 
 import httpx
 import pytest
+from unittest.mock import Mock
 
 from koebinar.config import Settings
 from koebinar.integrations.service import IntegrationError, IntegrationsService
 from koebinar.knowledge.service import KnowledgeService
 from koebinar.models import (
+    Answerability,
+    Chunk,
     IntegrationRegisterRequest,
     KnowledgeCreateRequest,
     Provider,
+    Question,
     SourceType,
+    Webinar,
     WebinarCreateRequest,
 )
 from koebinar.pipeline.orchestrator import PipelineOrchestrator
+from koebinar.qa.service import QAService
 from koebinar.storage import Store
 from tests.mocks.providers import (
     FREE_EL_KEY,
@@ -152,3 +158,39 @@ def test_pipeline_fails_without_keys(svc_env):
     orch = PipelineOrchestrator(store=store, settings=settings, http_client=client)
     with pytest.raises(Exception):
         orch.create_webinar(WebinarCreateRequest(theme="x", auto_run=True))
+
+
+def test_qa_rejects_citations_not_present_in_retrieval(svc_env):
+    settings, store, client = svc_env
+    knowledge = Mock()
+    knowledge.search.return_value = [
+        (Chunk(id="chunk_allowed", document_id="doc_allowed", text="Grounded evidence"), 0.95)
+    ]
+    qa = QAService(store=store, settings=settings, knowledge=knowledge, http_client=client)
+    qa._llm_answer = Mock(
+        return_value={
+            "answer_text": "Unverified claim",
+            "confidence": 0.99,
+            "citations": [
+                {"document_id": "doc_foreign", "chunk_id": "chunk_foreign", "score": 1.0}
+            ],
+        }
+    )
+    webinar = Webinar(
+        id="web_grounded",
+        theme="Grounding",
+        audience="general",
+        duration_min=5,
+        lang="en",
+        template="tech",
+        style="keynote",
+        voice_id="default",
+        document_ids=["doc_allowed"],
+    )
+    answer = qa._answer(
+        Question(id="q_grounded", webinar_id=webinar.id, message="What is supported?"),
+        webinar,
+    )
+
+    assert answer.answerability == Answerability.INSUFFICIENT
+    assert answer.citations == []

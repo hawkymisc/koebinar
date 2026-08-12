@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Link, Route, Routes } from 'react-router-dom'
+import { Link, Outlet, Route, Routes } from 'react-router-dom'
 import './App.css'
 import { getToken, setToken } from './api/client'
 import { WebinarDetailPage } from './pages/WebinarDetailPage'
 import { WebinarListPage } from './pages/WebinarListPage'
+import { ViewerPage } from './pages/ViewerPage'
 
 function TokenField() {
   const [value, setValue] = useState(getToken())
@@ -12,6 +13,8 @@ function TokenField() {
     <label className="token-field">
       APIトークン
       <input
+        type="password"
+        autoComplete="off"
         value={value}
         onChange={(e) => {
           setValue(e.target.value)
@@ -22,7 +25,7 @@ function TokenField() {
   )
 }
 
-function App() {
+function AdminLayout() {
   return (
     <div className="layout">
       <header className="header">
@@ -33,12 +36,21 @@ function App() {
         <TokenField />
       </header>
       <main className="main">
-        <Routes>
-          <Route path="/" element={<WebinarListPage />} />
-          <Route path="/webinars/:id" element={<WebinarDetailPage />} />
-        </Routes>
+        <Outlet />
       </main>
     </div>
+  )
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/watch/:id" element={<ViewerPage />} />
+      <Route element={<AdminLayout />}>
+        <Route path="/" element={<WebinarListPage />} />
+        <Route path="/webinars/:id" element={<WebinarDetailPage />} />
+      </Route>
+    </Routes>
   )
 }
 
