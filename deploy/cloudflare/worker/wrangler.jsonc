@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "koebinar-demo",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-13",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vpc_services": [
+    {
+      "binding": "KOEBINAR_ORIGIN",
+      "service_id": "019ffa4c-5b83-7bb1-9cd9-da1460231b79"
+    }
+  ]
+}

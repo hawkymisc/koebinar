@@ -1,0 +1,11 @@
+{
+  "name": "koebinar-demo-edge",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "wrangler": "4.122.0"
+  }
+}

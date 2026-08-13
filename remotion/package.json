@@ -8,12 +8,12 @@
     "studio": "npx remotion studio src/index.ts"
   },
   "dependencies": {
-    "@remotion/bundler": "4.0.286",
-    "@remotion/cli": "4.0.286",
-    "@remotion/renderer": "4.0.286",
+    "@remotion/bundler": "4.0.509",
+    "@remotion/cli": "4.0.509",
+    "@remotion/renderer": "4.0.509",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "remotion": "4.0.286"
+    "remotion": "4.0.509"
   },
   "devDependencies": {
     "@types/react": "18.3.12",
