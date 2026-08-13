@@ -57,6 +57,10 @@ Docker Compose 相当:
 docker compose up --build
 ```
 
+本番用（Web/Caddy + API + Worker）は `docker-compose.prod.yml` を使う。IP公開時は
+`KOEBINAR_SITE_ADDRESS=:80`、ドメイン取得後はその値をホスト名へ変更するとCaddyが
+HTTPSを自動設定する。詳細は `docs/deployment-lightsail.md` を参照。
+
 ### 3. 環境変数
 
 | 変数 | 既定 | 意味 |

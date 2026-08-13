@@ -44,6 +44,7 @@ async function main() {
   }
 
   const entry = resolve(__dirname, "src/index.ts");
+  const browserExecutable = process.env.KOEBINAR_REMOTION_BROWSER_EXECUTABLE || undefined;
   console.log(JSON.stringify({ phase: "bundle", entry }));
   const bundled = await bundle({
     entryPoint: entry,
@@ -53,11 +54,16 @@ async function main() {
   const fps = props.fps || props.timeline?.fps || 30;
   const durationInFrames = Math.max(1, props.timeline?.total_frames || 90);
   const compositionId = "Webinar";
+  const concurrency = Math.max(
+    1,
+    Number.parseInt(process.env.KOEBINAR_REMOTION_CONCURRENCY || "1", 10) || 1,
+  );
 
   const composition = await selectComposition({
     serveUrl: bundled,
     id: compositionId,
     inputProps: props,
+    browserExecutable,
   });
 
   console.log(
@@ -81,6 +87,8 @@ async function main() {
     codec: "h264",
     outputLocation: output,
     inputProps: props,
+    concurrency,
+    browserExecutable,
   });
 
   console.log(JSON.stringify({ phase: "done", output, generator: "koebinar-remotion" }));

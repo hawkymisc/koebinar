@@ -12,7 +12,9 @@ htmlcov/
 .ruff_cache/
 .venv/
 venv/
+node_modules/
 .env
+.env.production
 storage/
 artifacts/
 logs/

@@ -1,0 +1,44 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyLightsailOutsideTokyo",
+      "Effect": "Deny",
+      "Action": "lightsail:*",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": "ap-northeast-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadLightsailInTokyo",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:Get*",
+        "lightsail:Is*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "OperateLightsailInTokyo",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:CreateDiskSnapshot",
+        "lightsail:CreateInstanceSnapshot",
+        "lightsail:DeleteAlarm",
+        "lightsail:DeleteDiskSnapshot",
+        "lightsail:DeleteInstanceSnapshot",
+        "lightsail:DisableAddOn",
+        "lightsail:EnableAddOn",
+        "lightsail:PutAlarm",
+        "lightsail:RebootInstance",
+        "lightsail:StartInstance",
+        "lightsail:StopInstance",
+        "lightsail:TestAlarm"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

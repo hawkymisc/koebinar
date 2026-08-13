@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeKoebinarTokyoRoles",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": [
+        "arn:aws:iam::192404871451:role/KoebinarTokyoViewer",
+        "arn:aws:iam::192404871451:role/KoebinarTokyoOperator",
+        "arn:aws:iam::192404871451:role/KoebinarTokyoDeployer"
+      ]
+    }
+  ]
+}
