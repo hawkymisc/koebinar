@@ -9,8 +9,9 @@
 | ファイル | 内容 |
 |---|---|
 | `docs/audit_report.md` | v1.0 監査結果 |
-| `docs/requirements.md` | 要件定義書 v1.5 |
-| `docs/specification.md` | システム仕様書 v1.5 |
+| `docs/requirements.md` | 要件定義書 v1.7 |
+| `docs/specification.md` | システム仕様書 v1.7 |
+| `docs/tenant-auth-console.md` | テナント分離・ログイン・サイドバー・連携設定仕様 |
 
 ## ローカル B スタック（推奨）
 
@@ -71,6 +72,7 @@ HTTPSを自動設定する。詳細は `docs/deployment-lightsail.md` を参照�
 | `KOEBINAR_REMOTION_PROJECT_DIR` | `remotion` | Remotion プロジェクト |
 | `KOEBINAR_FORCE_RENDER_DOUBLE` | `false` | `true` で Remotion を使わず double |
 | `KOEBINAR_DEFAULT_AUTH_TOKEN` | なし（必須） | 運用者用Bearerトークン。公開フロントへ埋め込まない秘密値 |
+| `KOEBINAR_TENANTS_JSON` | 空 | 複数ワークスペースの `id` / `name` / `access_token` JSON配列。設定時は単一トークン設定より優先 |
 | `KOEBINAR_PUBLIC_QA_RATE_LIMIT` | `10` | 視聴者IP・ウェビナーごとのQ&A回数上限 |
 | `KOEBINAR_PUBLIC_QA_RATE_WINDOW_SEC` | `60` | Q&A回数制限の時間窓（秒） |
 | `KOEBINAR_MASTER_KEY` | dev 用 | BYOK 暗号化マスタ |
@@ -107,7 +109,7 @@ React（Vite）製。運用者コンソールではウェビナー作成、進�
 cd web && npm install && npm run dev
 ```
 
-起動前に `KOEBINAR_DEFAULT_AUTH_TOKEN` を推測困難な秘密値に設定する。`http://localhost:5173` を開き、同じ値を画面右上の入力欄に設定する（`localStorage` に保存）。API既定は `http://127.0.0.1:8000/api/v1`（`web/.env` の `VITE_API_BASE` で変更可）。トークンに既定値はなく、公開フロントのJavaScriptには埋め込まれない。
+起動前に `KOEBINAR_DEFAULT_AUTH_TOKEN` を推測困難な秘密値に設定する。`http://localhost:5173` を開き、ログイン画面でワークスペースID `default` と同じトークンを入力する。複数テナントでは `KOEBINAR_TENANTS_JSON` を使う。API既定は `http://127.0.0.1:8000/api/v1`（`web/.env` の `VITE_API_BASE` で変更可）。トークンに既定値はなく、公開フロントのJavaScriptには埋め込まれない。詳細は `docs/tenant-auth-console.md` を参照。
 
 APIサーバー側は `CORSMiddleware`（`allow_origins=["*"]`, Bearerトークン運用でCookie未使用のため許容）でdevサーバーからのアクセスを許可している。
 
@@ -166,11 +168,11 @@ Playwright E2EだけはローカルのAPI互換モックと**実Remotionレン�
 | POST/GET | `/api/v1/questions` | 運用者用 Q&A（認証必須） |
 | GET | `/api/v1/analytics/questions` | 質問エクスポート |
 
-運用者API認証: `Authorization: Bearer <KOEBINAR_DEFAULT_AUTH_TOKEN>`
+運用者API認証: `Authorization: Bearer <tenant access_token>`。単一テナント構成では `KOEBINAR_DEFAULT_AUTH_TOKEN` が `default` ワークスペースの `access_token` になる。
 
 公開Q&Aの回数制限は、APIが認識するクライアントIPとウェビナーIDを単位にする。リバースプロキシ配下では、Uvicornの `--forwarded-allow-ips` に実際のプロキシIPだけを設定すること。無条件に転送ヘッダーを信頼しない。
 
 ## Version
 
 - App: 0.3.0 (B-stack + Remotion path + Web UI)
-- Spec docs: v1.6
+- Spec docs: v1.7

@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     fps: int = 30
     # Required for operator APIs. No default: a public web bundle must not reveal it.
     default_auth_token: str = ""
+    # JSON array of {id, name, access_token}. When set, takes precedence over
+    # default_auth_token and enables tenant-aware operator authentication.
+    tenants_json: str = ""
 
     # Anonymous viewer Q&A abuse guard (per client IP + webinar, per process).
     public_qa_rate_limit: int = 10

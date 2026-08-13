@@ -123,6 +123,8 @@ class TTSAdapter:
                 sidx = int(slide.get("slide_index", 0))
                 for j, sentence in enumerate(slide.get("sentences") or []):
                     key = cache_key(sentence, voice_id, model_id)
+                    if self.integrations.tenant_id != "default":
+                        key = f"{self.integrations.tenant_id}:{key}"
                     cached = self.store.tts_cache.get(key)
                     if cached:
                         audio_uri = cached["audio_uri"]
@@ -161,6 +163,7 @@ class TTSAdapter:
                 model_id=model_id,
                 prompt_version=self.settings.prompt_version,
                 cost_hint=str(tts_script.get("total_credits", 0)),
+                tenant_id=self.integrations.tenant_id,
             )
             return durations, {"model_id": model_id, "voice_id": voice_id}
         finally:

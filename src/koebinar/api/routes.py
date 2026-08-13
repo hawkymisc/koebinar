@@ -8,11 +8,13 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
-from koebinar.api.deps import AppState, get_app_state, require_auth
+from koebinar.api.deps import AppState, get_app_state, get_tenant_services, require_auth
+from koebinar.auth import AuthConfigurationError, AuthPrincipal, authenticate_login
 from koebinar.integrations.service import IntegrationError
 from koebinar.models import (
     IntegrationRegisterRequest,
     KnowledgeCreateRequest,
+    LoginRequest,
     PublicationPatchRequest,
     Provider,
     QuestionCreateRequest,
@@ -31,10 +33,29 @@ def build_router() -> APIRouter:
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "koebinar"}
 
+    # --- Operator authentication ---
+    @router.post("/auth/login")
+    def login(body: LoginRequest, request: Request) -> dict[str, Any]:
+        settings = get_app_state(request).settings
+        try:
+            principal = authenticate_login(settings, body.workspace_id, body.access_token)
+        except AuthConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if principal is None:
+            raise HTTPException(status_code=401, detail="invalid workspace or credentials")
+        return {
+            "tenant": {"id": principal.tenant_id, "name": principal.tenant_name},
+            "token": body.access_token,
+        }
+
+    @router.get("/auth/session")
+    def session(principal: AuthPrincipal = Depends(require_auth)) -> dict[str, Any]:
+        return {"tenant": {"id": principal.tenant_id, "name": principal.tenant_name}}
+
     # --- Knowledge ---
     @router.post("/knowledge/documents", dependencies=[Depends(require_auth)])
     def register_document(body: KnowledgeCreateRequest, request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         if not body.title or not body.content:
             raise HTTPException(status_code=422, detail="title and content are required")
         doc = state.knowledge.register(body)
@@ -42,12 +63,12 @@ def build_router() -> APIRouter:
 
     @router.get("/knowledge/documents", dependencies=[Depends(require_auth)])
     def list_documents(request: Request) -> list[dict[str, Any]]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         return [d.model_dump(mode="json") for d in state.knowledge.list_documents()]
 
     @router.get("/knowledge/documents/{document_id}", dependencies=[Depends(require_auth)])
     def get_document(document_id: str, request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         doc = state.knowledge.get(document_id)
         if not doc:
             raise HTTPException(status_code=404, detail="document not found")
@@ -56,7 +77,7 @@ def build_router() -> APIRouter:
     # --- Webinars ---
     @router.post("/webinars", dependencies=[Depends(require_auth)])
     def create_webinar(body: WebinarCreateRequest, request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         if not body.theme:
             raise HTTPException(status_code=422, detail="theme is required")
         try:
@@ -68,12 +89,12 @@ def build_router() -> APIRouter:
 
     @router.get("/webinars", dependencies=[Depends(require_auth)])
     def list_webinars(request: Request) -> list[dict[str, Any]]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         return [w.model_dump(mode="json") for w in state.pipeline.list_webinars()]
 
     @router.get("/webinars/{webinar_id}", dependencies=[Depends(require_auth)])
     def get_webinar(webinar_id: str, request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         try:
             w = state.pipeline.get(webinar_id)
         except PipelineError as exc:
@@ -84,7 +105,7 @@ def build_router() -> APIRouter:
     def patch_publication(
         webinar_id: str, body: PublicationPatchRequest, request: Request
     ) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         try:
             w = state.pipeline.patch_publication(webinar_id, body)
         except PipelineError as exc:
@@ -93,7 +114,7 @@ def build_router() -> APIRouter:
 
     @router.patch("/webinars/{webinar_id}/script", dependencies=[Depends(require_auth)])
     def patch_script(webinar_id: str, body: ScriptPatchRequest, request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         try:
             w = state.pipeline.patch_script(webinar_id, body)
         except PipelineError as exc:
@@ -107,7 +128,7 @@ def build_router() -> APIRouter:
         request: Request,
         sync: Optional[bool] = Query(default=None),
     ) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         try:
             w = state.pipeline.run_step_async(webinar_id, step, sync=sync)
         except (PipelineError, IntegrationError) as exc:
@@ -117,7 +138,7 @@ def build_router() -> APIRouter:
 
     @router.get("/webinars/{webinar_id}/jobs", dependencies=[Depends(require_auth)])
     def list_jobs(webinar_id: str, request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         try:
             state.pipeline.get(webinar_id)
         except PipelineError as exc:
@@ -127,10 +148,14 @@ def build_router() -> APIRouter:
 
     @router.get("/jobs/{job_id}", dependencies=[Depends(require_auth)])
     def get_job(job_id: str, request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         job = state.pipeline.jobs.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="job not found")
+        try:
+            state.pipeline.get(job.webinar_id)
+        except PipelineError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
         return job.model_dump(mode="json")
 
     @router.get("/health/stack")
@@ -150,7 +175,7 @@ def build_router() -> APIRouter:
 
     @router.get("/webinars/{webinar_id}/video", dependencies=[Depends(require_auth)])
     def get_video(webinar_id: str, request: Request) -> Response:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         try:
             path = state.pipeline.video_path(webinar_id)
         except PipelineError as exc:
@@ -168,10 +193,9 @@ def build_router() -> APIRouter:
     # --- Public viewer ---
     def get_published_webinar(webinar_id: str, request: Request):
         state = get_app_state(request)
-        try:
-            webinar = state.pipeline.get(webinar_id)
-        except PipelineError as exc:
-            raise HTTPException(status_code=404, detail="webinar not found") from exc
+        webinar = state.store.webinars.get(webinar_id)
+        if webinar is None:
+            raise HTTPException(status_code=404, detail="webinar not found")
         if webinar.status != WebinarStatus.COMPLETED or webinar.published_at is None:
             raise HTTPException(status_code=404, detail="webinar not found")
         return state, webinar
@@ -216,9 +240,9 @@ def build_router() -> APIRouter:
 
     @router.get("/public/webinars/{webinar_id}/video")
     def get_public_video(webinar_id: str, request: Request) -> Response:
-        state, _ = get_published_webinar(webinar_id, request)
+        state, webinar = get_published_webinar(webinar_id, request)
         try:
-            path = state.pipeline.video_path(webinar_id)
+            path = state.for_tenant(webinar.tenant_id).pipeline.video_path(webinar_id)
         except PipelineError as exc:
             raise HTTPException(status_code=404, detail="video not found") from exc
         if not Path(path).exists():
@@ -249,7 +273,7 @@ def build_router() -> APIRouter:
                 headers={"Retry-After": str(state.settings.public_qa_rate_window_sec)},
             )
         try:
-            question = state.qa.ask(
+            question = state.for_tenant(webinar.tenant_id).qa.ask(
                 QuestionCreateRequest(webinar_id=webinar_id, message=body.message.strip())
             )
         except IntegrationError as exc:
@@ -261,7 +285,7 @@ def build_router() -> APIRouter:
         webinar_id: str, question_id: str, request: Request
     ) -> dict[str, Any]:
         state, webinar = get_published_webinar(webinar_id, request)
-        question = state.qa.get(question_id)
+        question = state.for_tenant(webinar.tenant_id).qa.get(question_id)
         if question is None or question.webinar_id != webinar_id:
             raise HTTPException(status_code=404, detail="question not found")
         return public_question_view(state, webinar, question)
@@ -271,7 +295,7 @@ def build_router() -> APIRouter:
     def register_integration(
         provider: str, body: IntegrationRegisterRequest, request: Request
     ) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         try:
             prov = Provider(provider)
         except ValueError as exc:
@@ -287,12 +311,12 @@ def build_router() -> APIRouter:
 
     @router.get("/integrations", dependencies=[Depends(require_auth)])
     def list_integrations(request: Request) -> list[dict[str, Any]]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         return [v.model_dump(mode="json") for v in state.integrations.list_all()]
 
     @router.delete("/integrations/{provider}", dependencies=[Depends(require_auth)])
     def delete_integration(provider: str, request: Request) -> dict[str, str]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         try:
             prov = Provider(provider)
         except ValueError as exc:
@@ -305,7 +329,7 @@ def build_router() -> APIRouter:
 
     @router.get("/integrations/elevenlabs/voices", dependencies=[Depends(require_auth)])
     def list_voices(request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         try:
             voices = state.integrations.get_voices()
         except IntegrationError as exc:
@@ -315,7 +339,7 @@ def build_router() -> APIRouter:
     # --- Questions ---
     @router.post("/questions", dependencies=[Depends(require_auth)])
     def create_question(body: QuestionCreateRequest, request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         if not body.message or not body.webinar_id:
             raise HTTPException(status_code=422, detail="webinar_id and message required")
         try:
@@ -328,7 +352,7 @@ def build_router() -> APIRouter:
 
     @router.get("/questions/{question_id}", dependencies=[Depends(require_auth)])
     def get_question(question_id: str, request: Request) -> dict[str, Any]:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         q = state.qa.get(question_id)
         if not q:
             raise HTTPException(status_code=404, detail="question not found")
@@ -339,7 +363,7 @@ def build_router() -> APIRouter:
         request: Request,
         format: str = Query(default="json", pattern="^(json|csv)$"),
     ) -> Response:
-        state = get_app_state(request)
+        state = get_tenant_services(request)
         if format == "csv":
             return PlainTextResponse(state.qa.export("csv"), media_type="text/csv")
         return JSONResponse(content=state.qa.list_for_analytics())

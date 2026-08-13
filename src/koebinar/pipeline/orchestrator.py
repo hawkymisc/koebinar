@@ -41,12 +41,19 @@ class PipelineOrchestrator:
         store: Optional[Store] = None,
         settings: Optional[Settings] = None,
         http_client=None,
+        tenant_id: str = "default",
     ) -> None:
         self.store = store or get_store()
         self.settings = settings or get_settings()
         self.http_client = http_client
-        self.integrations = IntegrationsService(store=self.store, settings=self.settings, http_client=http_client)
-        self.knowledge = KnowledgeService(store=self.store)
+        self.tenant_id = tenant_id
+        self.integrations = IntegrationsService(
+            store=self.store,
+            settings=self.settings,
+            http_client=http_client,
+            tenant_id=tenant_id,
+        )
+        self.knowledge = KnowledgeService(store=self.store, tenant_id=tenant_id)
         self.steps = GenerationSteps(
             store=self.store,
             settings=self.settings,
@@ -69,9 +76,13 @@ class PipelineOrchestrator:
         return bool(self.settings.sync_pipeline)
 
     def create_webinar(self, req: WebinarCreateRequest) -> Webinar:
+        for document_id in req.document_ids:
+            if self.knowledge.get(document_id) is None:
+                raise PipelineError("document not found", code="not_found", status_code=404)
         wid = generate_id("web_")
         webinar = Webinar(
             id=wid,
+            tenant_id=self.tenant_id,
             theme=req.theme,
             audience=req.audience,
             duration_min=req.duration_min,
@@ -99,7 +110,7 @@ class PipelineOrchestrator:
             except ValueError as exc:
                 raise PipelineError(f"unknown step: {step}", code="invalid_step") from exc
         w = self.get(webinar_id)
-        job = self.jobs.enqueue(webinar_id, step)
+        job = self.jobs.enqueue(webinar_id, step, tenant_id=self.tenant_id)
         w.published_at = None
         w.status = WebinarStatus.QUEUED
         w.job_id = job.id
@@ -109,12 +120,12 @@ class PipelineOrchestrator:
 
     def get(self, webinar_id: str) -> Webinar:
         w = self.store.webinars.get(webinar_id)
-        if not w:
+        if not w or w.tenant_id != self.tenant_id:
             raise PipelineError("webinar not found", code="not_found", status_code=404)
         return w
 
     def list_webinars(self) -> list[Webinar]:
-        items = list(self.store.webinars.values())
+        items = [webinar for webinar in self.store.webinars.values() if webinar.tenant_id == self.tenant_id]
         items.sort(key=lambda w: w.created_at, reverse=True)
         return items
 
@@ -278,6 +289,7 @@ class PipelineOrchestrator:
     ) -> PipelineArtifact:
         art = PipelineArtifact(
             id=generate_id("art_"),
+            tenant_id=self.tenant_id,
             webinar_id=w.id,
             step=step,
             type=atype,

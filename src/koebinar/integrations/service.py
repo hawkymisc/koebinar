@@ -37,10 +37,23 @@ class IntegrationsService:
         store: Optional[Store] = None,
         settings: Optional[Settings] = None,
         http_client: Optional[httpx.Client] = None,
+        tenant_id: str = "default",
     ) -> None:
         self.store = store or get_store()
         self.settings = settings or get_settings()
         self.http_client = http_client
+        self.tenant_id = tenant_id
+
+    def _storage_key(self, provider: Provider) -> Provider | str:
+        if self.tenant_id == "default":
+            return provider
+        return f"{self.tenant_id}:{provider.value}"
+
+    def _get_record(self, provider: Provider) -> IntegrationRecord | None:
+        record = self.store.integrations.get(self._storage_key(provider))
+        if record is None or record.tenant_id != self.tenant_id:
+            return None
+        return record
 
     def register(self, provider: Provider, req: IntegrationRegisterRequest) -> IntegrationView:
         if provider not in (Provider.ORCAROUTER, Provider.ELEVENLABS):
@@ -59,6 +72,7 @@ class IntegrationsService:
         encrypted = encrypt_secret(req.api_key, self.settings.master_key)
         record = IntegrationRecord(
             id=generate_id("int_"),
+            tenant_id=self.tenant_id,
             provider=provider,
             encrypted_api_key=encrypted,
             key_mask=mask_key(req.api_key),
@@ -66,14 +80,18 @@ class IntegrationsService:
             validated_at=utcnow(),
             meta={**meta, "warnings": warnings},
         )
-        self.store.integrations[provider] = record
+        self.store.integrations[self._storage_key(provider)] = record
         return self._to_view(record)
 
     def list_all(self) -> list[IntegrationView]:
-        return [self._to_view(r) for r in self.store.integrations.values() if r.status != IntegrationStatus.DELETED]
+        return [
+            self._to_view(record)
+            for record in self.store.integrations.values()
+            if record.tenant_id == self.tenant_id and record.status != IntegrationStatus.DELETED
+        ]
 
     def delete(self, provider: Provider) -> None:
-        rec = self.store.integrations.get(provider)
+        rec = self._get_record(provider)
         if rec is None:
             raise IntegrationError(f"no integration for {provider.value}", code="not_found", status_code=404)
         rec.status = IntegrationStatus.DELETED
@@ -86,7 +104,7 @@ class IntegrationsService:
                     updated["active"] = False
                     self.store.voice_refs[vid] = updated
         # keep record for audit but mark deleted
-        self.store.integrations[provider] = rec
+        self.store.integrations[self._storage_key(provider)] = rec
 
     def get_voices(self) -> list[VoiceInfo]:
         key = self.resolve_api_key(Provider.ELEVENLABS, require=True)
@@ -114,9 +132,15 @@ class IntegrationsService:
                 )
             )
             # track voice refs
-            rec = self.store.integrations.get(Provider.ELEVENLABS)
+            rec = self._get_record(Provider.ELEVENLABS)
             if rec and rec.status == IntegrationStatus.ACTIVE:
-                self.store.voice_refs[voices[-1].voice_id] = {
+                voice_key = (
+                    voices[-1].voice_id
+                    if self.tenant_id == "default"
+                    else f"{self.tenant_id}:{voices[-1].voice_id}"
+                )
+                self.store.voice_refs[voice_key] = {
+                    "tenant_id": self.tenant_id,
                     "integration_id": rec.id,
                     "provider": Provider.ELEVENLABS.value,
                     "voice_id": voices[-1].voice_id,
@@ -127,13 +151,13 @@ class IntegrationsService:
 
     def resolve_api_key(self, provider: Provider, *, require: bool = False) -> str:
         """Key resolution: ① registered BYOK → ② system fallback if flag allows."""
-        rec = self.store.integrations.get(provider)
+        rec = self._get_record(provider)
         if rec and rec.status == IntegrationStatus.ACTIVE and rec.encrypted_api_key:
             try:
                 return decrypt_secret(rec.encrypted_api_key, self.settings.master_key)
             except ValueError:
                 rec.status = IntegrationStatus.INVALID
-                self.store.integrations[provider] = rec
+                self.store.integrations[self._storage_key(provider)] = rec
                 if require:
                     raise IntegrationError(
                         f"{provider.value} key decrypt failed",
@@ -156,10 +180,10 @@ class IntegrationsService:
         return ""
 
     def mark_invalid(self, provider: Provider) -> None:
-        rec = self.store.integrations.get(provider)
+        rec = self._get_record(provider)
         if rec:
             rec.status = IntegrationStatus.INVALID
-            self.store.integrations[provider] = rec
+            self.store.integrations[self._storage_key(provider)] = rec
 
     def _validate_orcarouter(self, api_key: str) -> dict[str, Any]:
         client = OrcaRouterClient(

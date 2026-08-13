@@ -8,6 +8,7 @@ from typing import Optional
 import httpx
 from fastapi import Header, HTTPException, Request
 
+from koebinar.auth import AuthConfigurationError, AuthPrincipal, authenticate_token
 from koebinar.config import Settings
 from koebinar.integrations.service import IntegrationsService
 from koebinar.knowledge.service import KnowledgeService
@@ -44,24 +45,79 @@ class AppState:
             http_client=self.http_client,
         )
 
+    def for_tenant(self, tenant_id: str) -> "TenantServices":
+        if tenant_id == "default":
+            return TenantServices(
+                knowledge=self.knowledge,
+                integrations=self.integrations,
+                pipeline=self.pipeline,
+                qa=self.qa,
+            )
+        knowledge = KnowledgeService(store=self.store, tenant_id=tenant_id)
+        integrations = IntegrationsService(
+            store=self.store,
+            settings=self.settings,
+            http_client=self.http_client,
+            tenant_id=tenant_id,
+        )
+        pipeline = PipelineOrchestrator(
+            store=self.store,
+            settings=self.settings,
+            http_client=self.http_client,
+            tenant_id=tenant_id,
+        )
+        qa = QAService(
+            store=self.store,
+            settings=self.settings,
+            knowledge=knowledge,
+            integrations=integrations,
+            http_client=self.http_client,
+            tenant_id=tenant_id,
+        )
+        return TenantServices(
+            knowledge=knowledge,
+            integrations=integrations,
+            pipeline=pipeline,
+            qa=qa,
+        )
+
+
+@dataclass(frozen=True)
+class TenantServices:
+    knowledge: KnowledgeService
+    integrations: IntegrationsService
+    pipeline: PipelineOrchestrator
+    qa: QAService
+
 
 def get_app_state(request: Request) -> AppState:
     return request.app.state.koebinar
+
+
+def get_tenant_services(request: Request) -> TenantServices:
+    principal = getattr(request.state, "auth_principal", None)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return get_app_state(request).for_tenant(principal.tenant_id)
 
 
 def require_auth(
     request: Request,
     authorization: Optional[str] = Header(default=None),
     x_api_token: Optional[str] = Header(default=None),
-) -> None:
+) -> AuthPrincipal:
     # Do not accept Settings as a FastAPI param (it would be treated as a body model).
     settings = get_app_state(request).settings
-    if not settings.default_auth_token:
-        raise HTTPException(status_code=503, detail="operator authentication is not configured")
     token = None
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
     elif x_api_token:
         token = x_api_token.strip()
-    if token != settings.default_auth_token:
+    try:
+        principal = authenticate_token(settings, token or "")
+    except AuthConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if principal is None:
         raise HTTPException(status_code=401, detail="unauthorized")
+    request.state.auth_principal = principal
+    return principal
