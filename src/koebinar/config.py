@@ -45,7 +45,20 @@ class Settings(BaseSettings):
     public_qa_rate_window_sec: int = 60
 
     # LLM / TTS model defaults
+    # OrcaRouter's account-provisioned adaptive router. The bare "adaptive"
+    # alias is not part of the hosted API's public model-id contract.
     llm_model: str = "orcarouter/auto"
+    # Hosted OrcaRouter does not publish a recommended timeout. Its documented
+    # OpenAI-compatible path can serve long-running routed generations, so keep
+    # connect/write bounds narrow while allowing a long response read window.
+    orcarouter_connect_timeout_sec: float = 10.0
+    orcarouter_models_read_timeout_sec: float = 30.0
+    orcarouter_read_timeout_sec: float = 600.0
+    orcarouter_write_timeout_sec: float = 30.0
+    orcarouter_pool_timeout_sec: float = 10.0
+    orcarouter_max_retries: int = 1
+    orcarouter_retry_backoff_sec: float = 1.0
+    orcarouter_retry_max_delay_sec: float = 60.0
     tts_model: str = "eleven_v3"
     # The requested provider format is only a hint. Persisted artifacts derive
     # their extension and MIME type from the returned bytes.
