@@ -2,10 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 監査日 | 2026-08-14 |
-| 基準コミット | `5ecaac3`（`main` / PR #10 マージ時点） |
+| 監査日 | 2026-08-15 |
+| 基準コミット | `55920a7`（`origin/main`）+ `fix/issues-12-14` 作業差分 |
 | 対象 | `README.md`、`docs/`、API、Worker、Web UI、Remotion、テスト、Compose設定 |
-| 判定 | **部分整合**。自動テストは通過したが、中核受入条件を満たさない、または証明できない不整合が残る |
+| 判定 | **部分整合**。Issue #12〜14の変更範囲はClean。リポジトリ全体には既報の未解消不整合が残る |
 | 未解消 | Critical 0件 / High 3件 / Medium 7件 / Low 3件（計13件） |
 | 解消済み | Critical 3件（A-001、A-002、A-005） |
 
@@ -30,13 +30,24 @@
 
 | 検証 | 結果 | 証明する範囲 |
 |---|---|---|
-| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **291 passed**、分岐込み **90.43%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
-| `cd web && npm test` | **16 passed** | APIクライアント、認証UI、Voice同意、ファイル抽出の単体契約 |
+| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **295 passed**、分岐込み **90.43%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
+| `cd web && npm test` | **21 passed** | APIクライアント、認証UI、権限ヒント、Voice同意、ファイル抽出の単体契約 |
 | `cd web && npm run build` | **pass** | TypeScript型検査とVite本番ビルド |
 | `cd web && npm run lint` | **pass** | Oxlint静的検査 |
-| `cd web && npm run test:e2e` | **1 passed**（53.4秒） | 実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&A。ブラウザ再生はmuteだが、同じ生成経路の`ffprobe`が音声ストリームも検査する。聴感品質・ナレーション内容は対象外 |
+| `cd web && npm run test:e2e` | **今回未再実行**（前回監査: 1 passed） | 今回は生成・動画経路を変更していない。前回は実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&Aを検証 |
 
-Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に220件のwarningが出た。
+Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に218件のwarningが出た（既報A-016）。
+
+### 2.1 Issue #12〜14 差分監査
+
+| 受入契約 | 実装証拠 | テスト証拠 | 判定 |
+|---|---|---|---|
+| 登録時の外部プロバイダー401/403等をKoebinar認証401と分離 | `IntegrationsService._validate_orcarouter/_validate_elevenlabs` が安全なdetailの422へ正規化 | service/API/Web client回帰テスト | Clean |
+| 検証失敗時にセッションと既存integrationを維持し、秘密情報を返さない | 保存は検証成功後のみ。Webは422で`clearSession`を実行しない | 401/403/429/500、既存record、localStorage、レスポンス非漏えいを検証 | Clean |
+| OrcaRouter / ElevenLabsの必要アクセス範囲を一貫したUIで案内 | 両カードにnative `details/summary`の`[i]`ヒント、モバイル用viewport内配置 | 文言、要素数、ARIA名、本番build、lintを検証 | Clean |
+| 要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.9、tenant-auth-consoleをv1.1へ更新 | 実装・テスト・3文書を相互照合 | Clean |
+
+今回の変更範囲で新たな未記録不整合は検出しなかった。第5章の13件は既存監査で追跡中のため、今回スコープのClean判定には混在させない。
 
 ## 3. 整合を確認できた主な契約
 
@@ -46,6 +57,7 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 | 追加指示をアウトラインと台本へ分離して渡す | `GenerationSteps.generate_outline/generate_script` | `test_generation_keeps_instructions_separate...` | 整合 |
 | Bearer tokenからテナントを決定し、他テナントIDを404にする | `auth.py` / tenant-scoped services | `test_multitenant_auth.py` | 基本経路は整合。網羅性はA-011参照 |
 | BYOKの暗号化保存、マスク表示、削除後fail-closed | `crypto.py` / `IntegrationsService` | `test_crypto.py` / `test_e2e_core.py` | 整合 |
+| BYOK登録検証失敗とオペレーター認証失効の分離 | `IntegrationsService` / Web API client | provider status/API/session回帰テスト | 整合 |
 | SQLiteジョブと別Workerによる非同期再開 | `jobs.py` / `worker.py` | `test_e2e_async_durable.py` | 単一テナント経路は整合 |
 | 明示公開前は視聴不可、編集・再生成で公開解除 | public routes / orchestrator | `test_public_viewer_api.py` | 整合 |
 | Remotion動画に音声を配置し、probe済みMP4だけを公開可能にする | `Webinar.tsx` / `VideoRenderer` / `probe_media` | `test_audio_contract.py` / `test_public_viewer_api.py` | 整合 |
@@ -183,6 +195,9 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 6. READMEの監査説明、Remotionのfail-closed公開契約、音声probeの検証境界を明記した。
 7. Lightsail手順の古い「画面上部のAPIトークン」表現を、現在のログイン画面へ更新した。
 8. PR #10で解消した音声合成、公開可否、Voice同意のCritical指摘を解消済みへ移し、残課題を現行実装に合わせた。
+9. 登録時の外部プロバイダー認証エラーとKoebinarのオペレーター認証401を分離し、422契約と保存非更新を要件・仕様へ反映した。
+10. OrcaRouter / ElevenLabsで実際に利用する検証・生成APIと、期限・IP・スコープ・上限等の案内内容を仕様へ反映した。
+11. `tenant-auth-console.md`へ、検証失敗時のセッション維持、画面内エラー、`[i]`ヒントのアクセシビリティ契約を追加した。
 
 ## 7. 推奨修正順
 
