@@ -52,8 +52,9 @@ CLOUDFLARE_TUNNEL_TOKEN=...
 `.env.production` はGitへ追加しない。OrcaRouterとElevenLabsは認証付きIntegrations
 APIからBYOKで登録するため、システム共通キーは既定で無効にする。
 
-ローカルの`.env.production`を復旧用原本とし、権限600を維持する。画面上部の
-「APIトークン」には`KOEBINAR_DEFAULT_AUTH_TOKEN`の値を入力する。
+ローカルの`.env.production`を復旧用原本とし、権限600を維持する。単一テナント構成では
+ログイン画面へワークスペースID`default`と`KOEBINAR_DEFAULT_AUTH_TOKEN`の値を入力する。
+`KOEBINAR_TENANTS_JSON`を使う場合は、対象ワークスペースの`id`と`access_token`を入力する。
 
 ## 起動と確認
 

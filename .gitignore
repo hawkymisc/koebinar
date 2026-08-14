@@ -27,3 +27,5 @@ remotion/out/
 *.props.json
 AGENTS.md
 .codex/
+.keys
+site/

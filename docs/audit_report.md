@@ -1,121 +1,193 @@
-# 監査レポート — ai_webinar_agent_requirements_and_spec v1.0 → v1.1
+# 設計・仕様・実装・テスト 整合性監査レポート
 
 | 項目 | 内容 |
 |---|---|
-| 監査日 | 2026-08-08 |
-| 対象 | requirements.md v1.0 / specification.md v1.0（ChatGPT生成） |
-| 結論 | **修正必須**。技術選定・フェーズ構成・スコープの3点で発注者意図と乖離 |
+| 監査日 | 2026-08-14 |
+| 基準コミット | `5ecaac3`（`main` / PR #10 マージ時点） |
+| 対象 | `README.md`、`docs/`、API、Worker、Web UI、Remotion、テスト、Compose設定 |
+| 判定 | **部分整合**。自動テストは通過したが、中核受入条件を満たさない、または証明できない不整合が残る |
+| 未解消 | Critical 0件 / High 3件 / Medium 7件 / Low 3件（計13件） |
+| 解消済み | Critical 3件（A-001、A-002、A-005） |
 
-## 1. 重大な乖離（Must Fix）
+## 1. 文書の位置づけ
 
-### A-1. フェーズ構成の逆転
-- **v1.0の問題**: ウェビナー動画生成・TTS・AI登壇をPhase 2以降に後送りし、MVPを「既存ウェビナーへの後付けRAG Q&A + Intent Scoring + CRM Agent」と定義していた。
-- **発注者意図**: ハッカソンの中核は**ウェビナー動画の自動生成**（台本→スライド→ナレーション→動画）。
-- **修正**: Phase 1（ハッカソンMVP）を動画生成パイプラインに再定義。RAG Q&Aはデモ効果と実装コストのバランスからサブ機能として残置。Intent Scoringは簡易版（構造化JSON抽出＋ローカル集計）に縮小。
+- `requirements.md`: プロダクト要件と受入条件の正本
+- `specification.md`: 要件を実現する技術契約の正本
+- 実装・構成ファイル: 現在の実際の挙動
+- テスト結果: テストが明示的に検証した範囲だけの達成証拠
+- 本書: 上記4層の差分と未検証事項を記録する現行監査
 
-### A-2. OrcaRouter必須要件の欠落
-- **v1.0の問題**: 「LLM Provider抽象化を自前実装し1社から開始」（OD-03、NFR-06、AI-06）。
-- **発注者意図**: ハッカソン規定によりOrcaRouter経由でのAI組み込みが**必須**。
-- **修正**: 全LLM呼び出しをOrcaRouter（OpenAI互換API、`https://api.orcarouter.ai/v1`）経由に統一。これに伴い:
-  - 自前のProvider抽象化レイヤーは**実装不要**（要件から削除）
-  - PIIマスキング・プロンプトインジェクション対策・不適切表現フィルタ等のガードレール要件の一部をOrcaRouterの統合ガードレール機能へ委譲
-  - コスト監視（token/cost per event）はOrcaRouterの可観測性機能を利用
-  - embeddingsのOrcaRouter経由可否は要確認（未決事項OD-03に変更）
+テスト通過だけでは仕様達成と判定しない。テストが受入条件を直接検査しているか、テストダブルではなく必要な実経路を通っているかまで確認した。
 
-### A-3. 動画生成の技術選定が未定義
-- **v1.0の問題**: 動画生成に関する技術要件が存在しない（Phase 2の抽象記述のみ）。
-- **修正**: **Remotionを主レンダラーとして採用**。理由:
-  - 成果物として確定的にMP4を出力できる（daida-aiの成果物は音声埋め込みPPTX＋自動再生設定であり、動画ファイルではない）
-  - React componentでスライドを宣言的に記述でき、音声とフレーム単位で同期可能
-  - daida-aiはClaude Code対話型プラグインであり、プロダクトのバックエンドサービスとして組み込む形態に不向き
-- **daida-aiからの設計流用**（実装コスト削減、発注者意図どおり）:
-  - パイプライン段階構成: アウトライン→スライド→トークスクリプト→音声合成→合成物埋め込み→再生設定
-  - スライドテンプレート3種の思想（tech / casual / formal）
-  - 発音辞書（pronunciation_dict.tsv）によるTTS読み誤り補正
-  - 話法スタイルプリセット（casual / keynote / formal / humorous）
-  - ステップ単位の再実行（「Step 4からやり直す」）の設計
+### 1.1 監査対象外
 
-### A-4. TTS選定が未定義
-- **修正**: 言語ルーティング型TTS Adapterを新設。
-  - **英語**: ElevenLabs ボイスクローン（クラウドAPI）
-  - **日本語**: Irodori-TTS（ローカル、参照音声10〜30秒によるゼロショットクローン、絵文字による感情制御対応）
-- **設計上の制約を要件化**:
-  - Irodori-TTSはローカル動作のためGPU環境が必要 → デモは事前バッチ生成を基本とする
-  - 漢字の読み誤りが発生しうるため、文単位分割生成＋発音辞書＋リテイク運用を仕様化
-  - 参照音声・クローン音声は**本人同意を得た音声のみ**使用（両サービスの利用規約遵守を受入条件に追加）
+- ローカル生成物としてGit管理対象外にした `site/`
+- AWS Lightsail / Cloudflare の現在の稼働状態と設定値
+- OrcaRouter / ElevenLabs の契約、料金、利用規約の最新内容
+- 実アカウントを使う外部APIの品質・残高・レート上限
 
-## 2. スコープ過剰（ハッカソンに不適合、削減済み）
+## 2. 検証結果
 
-| v1.0の要件 | v1.1での扱い |
-|---|---|
-| マルチテナントSaaS、テナント分離 | 削除（シングルテナント）。将来拡張として付記 |
-| HubSpot / Salesforce CRM同期、冪等キー、DLQ | Phase 3へ後送り。MVPはCSV/JSONエクスポートで代替 |
-| 5ロールRBAC | 削除（管理者/視聴者の2区分に簡素化） |
-| 月間99.9% SLO、日次バックアップ、データ保持ジョブ | 削除（ハッカソンでは非現実的）。デモ成立条件に置換 |
-| モデレーターコンソール（SCR-05） | 簡易承認UI（生成台本・回答のプレビューと修正）に縮小 |
-| Webhook署名検証、replay attack対策等 | 外部ウェビナー基盤連携自体をPhase 2へ後送りしたため削除 |
-| OIDC/SSO、Secrets Manager、監査ログ100% | 環境変数管理＋最小限の生成ログに簡素化 |
-
-## 3. 軽微な修正
-
-- 改訂履歴の作成者「OpenAI / Draft」→ 実チーム名に更新（プレースホルダ化）
-- 「既存ウェビナー基盤(Zoom/EventHub等)連携」前提の記述を、MVPでは自己完結型（アップロード資料→動画生成→自社プレイヤーで配信）に変更
-- KPIを事業KPI中心からハッカソン審査観点（デモ完遂・生成品質・OrcaRouter活用度）に再構成
-
-## 4. 残した v1.0 の良い部分
-
-- Grounded by default（KB根拠のある回答のみ自動投稿）の設計原則
-- 構造化出力スキーマ（answer_text / confidence / citations / answerability）
-- Golden Dataset による回答品質評価の考え方（件数は50件→20件に縮小）
-- プロンプトインジェクション対策の基本方針（OrcaRouterガードレールとの二層防御として残置）
-
-## 5. 未決事項（実装前に決めること）
-
-| ID | 論点 | 推奨 |
+| 検証 | 結果 | 証明する範囲 |
 |---|---|---|
-| OD-01 | 動画の想定尺・解像度 | 5分 / 1080p / 30fps から開始 |
-| OD-02 | Remotionのレンダリング環境 | ローカル `@remotion/renderer` で開始、必要ならLambda |
-| OD-03 | embeddingsをOrcaRouter経由にできるか | 対応モデルを確認。不可なら埋め込みのみ直接プロバイダー |
-| OD-04 | Irodori-TTS実行環境 | チーム内GPU機 or クラウドGPUでバッチ生成 |
-| OD-05 | ElevenLabsのクローン方式 | Instant Voice Cloneで開始（提出音声の同意確認込み） |
-| OD-06 | Q&A機能をデモに含めるか | 動画生成完成後の残り時間で判断 |
+| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **291 passed**、分岐込み **90.43%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
+| `cd web && npm test` | **16 passed** | APIクライアント、認証UI、Voice同意、ファイル抽出の単体契約 |
+| `cd web && npm run build` | **pass** | TypeScript型検査とVite本番ビルド |
+| `cd web && npm run lint` | **pass** | Oxlint静的検査 |
+| `cd web && npm run test:e2e` | **1 passed**（53.4秒） | 実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&A。ブラウザ再生はmuteだが、同じ生成経路の`ffprobe`が音声ストリームも検査する。聴感品質・ナレーション内容は対象外 |
 
+Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に220件のwarningが出た。
 
----
+## 3. 整合を確認できた主な契約
 
-## 追記: v1.1 → v1.2（2026-08-08）
+| 契約 | 実装証拠 | テスト証拠 | 判定 |
+|---|---|---|---|
+| 明示選択した資料だけを生成・Q&Aに使用 | `GenerationSteps._kb_context` / `QAService._answer` | `test_v16_knowledge_instructions.py` | 整合 |
+| 追加指示をアウトラインと台本へ分離して渡す | `GenerationSteps.generate_outline/generate_script` | `test_generation_keeps_instructions_separate...` | 整合 |
+| Bearer tokenからテナントを決定し、他テナントIDを404にする | `auth.py` / tenant-scoped services | `test_multitenant_auth.py` | 基本経路は整合。網羅性はA-011参照 |
+| BYOKの暗号化保存、マスク表示、削除後fail-closed | `crypto.py` / `IntegrationsService` | `test_crypto.py` / `test_e2e_core.py` | 整合 |
+| SQLiteジョブと別Workerによる非同期再開 | `jobs.py` / `worker.py` | `test_e2e_async_durable.py` | 単一テナント経路は整合 |
+| 明示公開前は視聴不可、編集・再生成で公開解除 | public routes / orchestrator | `test_public_viewer_api.py` | 整合 |
+| Remotion動画に音声を配置し、probe済みMP4だけを公開可能にする | `Webinar.tsx` / `VideoRenderer` / `probe_media` | `test_audio_contract.py` / `test_public_viewer_api.py` | 整合 |
+| Voice一覧取得と同意付与を分離し、明示証跡がないクローンVoiceを拒否 | `VoiceConsentService` / consent API | `test_voice_consent.py` / `voice-consent.test.ts` | 整合 |
+| PDF/PPTXをブラウザ内で抽出し、本文だけ登録 | `fileExtraction.ts` / `WebinarListPage.tsx` | `fileExtraction.test.ts` / Playwright | 整合 |
+| 根拠不足時の回答保留と引用の所属検査 | `QAService` / `gate_answer` | Q&A unit/API tests | 整合 |
 
-開発期間が約1週間であることを踏まえ、発注者判断によりTTSを**ElevenLabs（Eleven v3）一本化**に変更した。
+## 4. 解消済みのCritical指摘
 
-- 削除: Irodori-TTS、TTS言語ルーティング、GPUワーカー（tts-worker）、GPU関連リスク・未決事項
-- 変更: 日英とも同一クローンVoiceで生成する構成に統一（「本人の声のまま2言語」がデモの訴求点になる）
-- 維持: 発音辞書＋文単位分割・リテイクの仕組み（適用先をElevenLabsの日本語読み誤り対策に変更）、TTS Adapter interface（将来Irodori-TTS等を追加可能）、音声クローン同意フラグとAI生成表記
-- 追加: ElevenLabs単一依存リスクと、edge-tts等へのデモ保険フォールバックフラグ
+### A-001 — Resolved — Remotion動画にナレーション音声が合成されない
 
+- 解消コミット: `1b63fec`（PR #10）。
+- 実装: `timeline.audio_clips`をRemotionの`<Audio>`へフレーム位置付きで配置し、成果物ディレクトリの音声をレンダリング用public領域へ安全にステージする。音声長が動画全体より短い場合もcomposition終端まで無音でパディングする。
+- 検証: `ffprobe`で映像・音声ストリーム、各ストリーム尺、全体尺を検査する。`test_audio_contract.py`が音声ステージング、配置、probe契約を回帰検証する。
 
-## 追記: v1.2 → v1.3（2026-08-08）
+### A-002 — Resolved — Remotion失敗時の構造ダブルが完成動画として扱われる
 
-発注者要望により、ElevenLabsの**APIキー持ち込み（BYOK）**を仕様化した。
+- 解消コミット: `1b63fec`（PR #10）。
+- 実装: production rendererはRemotion不可・レンダリング失敗・probe失敗を例外として扱い、ウェビナーとジョブを`failed`にする。出力は一時ファイルへ生成し、probe合格後だけ原子的に確定する。
+- 公開契約: `renderer=remotion`、`test_only=false`、`publishable=true`、probe成功、成果物実在のすべてを満たす動画だけを公開できる。doubleは明示的テストモード専用で常に公開不可。
+- 検証: `test_durable_async_remotion.py`と`test_public_viewer_api.py`が失敗伝播と公開拒否を回帰検証する。
 
-- 追加: FR-006a（キー登録・検証・削除）、FR-006b（Voice一覧・選択）、Integrations API 4本、integrationsエンティティ（アプリ層暗号化キー保存、マスク表示）
-- キー解決順序: 運用者の持ち込みキー → システムフォールバックキー（構成フラグで有効時のみ、デモ用）
-- 検証フロー: subscription照会（有効性・tier・残クレジット）＋Voicesスコープ確認。Freeプランには商用不可警告
-- セキュリティ: 平文保存・ログ出力・フロント返却の禁止、制限付きキー（スコープ・クレジット上限・有効期限）発行の推奨案内
-- ElevenLabs API側の対応確認済み: xi-api-keyヘッダー認証、キー単位のスコープ制限・クレジット上限・IPアローリスト、GET /v1/user/subscriptionによるプラン/残量照会が利用可能
+### A-005 — Resolved — 音声クローン同意を収集せず`consent_flag=true`にする
 
+- 解消コミット: `1b63fec`（PR #10）。
+- 実装: Voice一覧取得を読み取り専用にし、クローン/custom/未知カテゴリは`required`、既知のpremade Voiceだけを`not_required`とする。明示操作でテナント、Voice、証跡source、時刻、実行主体、規約文バージョンを記録するまで利用不可。
+- 強制点: ウェビナー作成、ジョブ実行、TTS外部呼び出し直前で所属・有効性・同意をfail-closedに再検証する。同意取消とジョブ取消は独立操作とし、取消後の生成ステップは拒否する。
+- キー差替え: 同一テナント・同一provider Voice IDなら同意対象は変わらないため証跡を維持し、active integrationだけを再関連付けする。キー削除時は関連Voiceを無効化する。
+- 検証: `test_voice_consent.py`と`voice-consent.test.ts`が一覧取得、明示同意、取消、テナント境界、旧推定フラグのfail-closed移行、キー差替えを回帰検証する。
 
-## 追記: v1.3 → v1.4（2026-08-08）
+## 5. 未解消の不整合
 
-発注者要望により、**OrcaRouterもBYOK化**し、外部プロバイダーのキー管理をintegrations共通機構に統一した。
+### A-003 — High — 台本の事前承認ゲートがない
 
-- Integrations APIを `POST/DELETE /api/v1/integrations/{provider}`（orcarouter / elevenlabs）に共通化。GETは全プロバイダー一括の接続状態を返す
-- integrationsエンティティのproviderをenum化し、プロバイダー固有情報（ELのtier/残量等）はmeta_jsonへ
-- キー解決順序を全プロバイダー共通ルール化: ①運用者の登録キー → ②システムフォールバックキー（`ALLOW_SYSTEM_LLM_KEY` / `ALLOW_SYSTEM_TTS_KEY` で個別制御）
-- OrcaRouterキーの登録時検証はモデル一覧取得等の軽量呼び出しで実施。残高照会APIの有無は未決事項OD-09として確認対象に
-- コスト可観測性の位置づけを変更: BYOKにより各運用者が自分のOrcaRouterダッシュボードで消費を確認する構成に
-- リスク追加: 持ち込みOrcaRouterキーの残高不足（登録時検証＋失敗時案内＋デモ用フォールバックで緩和）
+- 要件・仕様: BR-03、FR-005、設計原則`Human override`は、音声・動画生成前に台本を確認・修正・承認できることを要求する。
+- 実装: Web UIは`auto_run=true`が既定で、作成後にOutlineからVideoまで連続実行する。台本編集は完成後に行い、再生成する方式。
+- テスト: 台本編集テストも、いったん全工程を完了した後にpatchしてTTS以降を再実行する。
+- 影響: 未確認の台本が外部TTSへ送信され、コスト消費と不適切な動画生成が発生しうる。
+- 解消条件: Script完了時に`awaiting_approval`へ停止し、明示承認後にTTSへ進む。現行方式を採用するならBR-03/FR-005の合意変更が必要。
 
+### A-004 — High — ElevenLabs Voice一覧とウェビナーのVoice選択が接続されていない
 
-## 追記: v1.4 → v1.5（2026-08-08）
+- 要件・仕様: BR-01/BR-04、FR-006bは、登録アカウントのVoice一覧から使用Voiceを選べることを要求する。
+- 実装: 連携設定画面ではVoiceの同期・同意記録・取消ができ、APIは所属・有効性・同意を検証する。一方、ウェビナー作成画面にはVoice選択欄がなく、既定値`voice_id="default"`が送られる。
+- テスト: API側のVoice検証は`test_voice_consent.py`で確認できるが、UIで同期済みVoiceを選んで作成する経路は存在せず、E2Eもない。
+- 影響: 通常のUI操作ではクローンVoiceを指定できず、日英同一Voiceの受入条件を満たせない。
+- 解消条件: 同意済みかつ利用可能なVoiceだけを作成フォームへ表示し、選択値を送信するUIとE2Eを追加する。
 
-プロダクト名を **Koebinar（コエビナー）** に決定し、全文書のプロダクト名を差し替えた（旧称: AI Webinar Agent）。タグライン「あなたの声が、あなたの代わりに登壇する。」を追加。簡易確認の結果、主要ドメイン（.com/.ai/.app/.dev/.jp）のDNS応答なし、GitHub org / npm / PyPI の `koebinar` は空き。正式利用前にWHOISおよび商標データベース（J-PlatPat等）での確認を推奨。
+### A-006 — High — 本番Composeが転送元を無条件に信頼する
+
+- 要件・仕様: 仕様書§11とREADMEは、公開Q&AのIP制限のため`--forwarded-allow-ips`を実際のプロキシIPだけに限定し、転送ヘッダーを無条件に信頼しないと定める。
+- 実装: `docker-compose.prod.yml`はUvicornへ`--forwarded-allow-ips=*`を指定する。
+- テスト: 転送ヘッダー偽装や本番プロキシ構成のテストはない。
+- 影響: 到達経路によってはクライアントIPを偽装し、公開Q&Aのレート制限を回避できる。
+- 解消条件: cloudflared/Caddyの実際の送信元CIDRだけを信頼し、構成テストで偽装ヘッダーを拒否する。
+
+### A-007 — Medium — JSON Schema適合を強制していない
+
+- 要件・仕様: AI-07は台本・Q&A・IntentのJSON Schema適合を要求する。
+- 実装: LLMには`response_format={"type":"json_object"}`だけを指定し、返却dictをJSON SchemaまたはPydanticモデルで検証していない。主要キーがない場合はフォールバックするが、型・範囲・参照整合性は保証しない。
+- テスト: 固定形状のモックレスポンスが中心で、壊れた構造への契約テストがない。
+- 解消条件: 出力モデルとSchemaを定義し、検証失敗時の再試行/失敗処理をテストする。
+
+### A-008 — Medium — TTS運用契約が部分実装
+
+- 要件・仕様: FR-007と仕様書§5は、voice settingsを含むキャッシュキー、対象文だけのリテイク、障害時のedge-tts等への切替を記載する。
+- 実装済み: TTSレスポンスの実形式を検出してMP3/WAVを正しい拡張子・MIME・durationで保存し、出力形式をキャッシュキーへ含める。壊れたキャッシュは再検査して再生成する。
+- 未実装: 現在未使用のvoice settingsをキャッシュキーへ反映する契約、文単位リテイクの公開API/UI、代替TTSフラグ、429の指数バックオフ。
+- テスト: MP3/WAV形式、duration、壊れた音声、キャッシュ再利用は検証するが、局所リテイクUI・代替経路は検証しない。
+- 解消条件: 残す運用契約を絞って仕様化し、voice settings、再実行単位、再試行・代替方針を一致させる。
+
+### A-009 — Medium — OrcaRouterガードレール有効化の証拠がない
+
+- 要件・仕様: AI-09と仕様書§4はPII ShieldおよびPrompt Injectionガードを第一層として有効化する。
+- 実装: アプリ側プロンプトにはKBを未信頼データとする指示がある一方、OrcaRouterリクエストや構成ファイルにガードレール有効化を示す設定がない。
+- テスト: PII遮断・プロンプトインジェクション耐性のテストがない。
+- 判定: 外部ダッシュボード設定の可能性はあるため「未実装」と断定せず、リポジトリからは**未検証**とする。
+- 解消条件: 有効化方法と責任境界を記録し、代表的な攻撃入力の回帰テストまたは外部設定証跡を持つ。
+
+### A-010 — Medium — 品質・尺・性能の受入条件をテストが証明しない
+
+- 要件・仕様: BR-02、NFR-01〜05、KPI、仕様書§12は、5分動画、30分以内、Q&A p95、JA/EN、Golden Q&A 20件、groundednessを要求する。
+- 実装・テスト: モック経路でJA/ENの完了は確認するが、動画尺、実音声、実プロバイダー遅延・コスト、20件のGolden Dataset、p95を測定しない。Playwrightは日本語1本の視覚再生だけ。
+- 影響: 高カバレッジでも、審査上の品質・時間・コスト条件は未証明。
+- 解消条件: 受入条件ごとの計測テストと保存可能な結果を追加する。
+
+### A-011 — Medium — テナント受入条件のテストが一部不足
+
+- 要件・仕様: FR-017と`tenant-auth-console.md`は、資料・ウェビナー・ジョブ・質問分析・BYOKに加え、非同期Workerが対象テナントのキーだけを使うことを要求する。
+- 実装: `job.tenant_id`をWorkerへ引き継ぐ経路は存在する。
+- テスト: 2テナントの資料・ウェビナー・ジョブ参照とBYOK一覧は確認するが、2テナントでWorkerを実行して各BYOKを使い分けるテスト、質問/回答/Intent/分析の相互分離テストはない。
+- 解消条件: テナント別の異なるモックキーを用いた非同期生成と、質問分析の交差アクセスを追加する。
+
+### A-012 — Medium — Retrieval実装が仕様上のembedding経路と一致しない
+
+- 要件・仕様: 仕様書§4/§7はOrcaRouter経由embeddingを第一候補とし、vector similarityを使う。直接呼出し例外は構成フラグで管理する。
+- 実装: 外部embeddingを使わず、64次元のhashing trickと語彙重複を組み合わせた決定論的スコアを使う。切替フラグやモデル記録はない。
+- テスト: 小さな固定文のランキングだけで、意味検索品質を評価しない。
+- 解消条件: MVPの正式方式を「ローカルhash/lexical」として要件合意するか、仕様どおりのembedding adapterと評価を実装する。
+
+### A-013 — Medium — 旧PDF/URL擬似入力が正規APIとして成功扱いになる
+
+- 要件・仕様: FR-001、OD-10/OD-11、仕様書§2.1は、PDF/PPTXをブラウザで抽出してサーバーへは`source_type=text`だけを送り、URL取り込みはMVPスコープ外とする。
+- 実装: `SourceType.PDF/URL`も受理する。PDFは文字列上の簡易マーカー抽出、URLは`URL content placeholder for ...`への変換だけでchunk化し、いずれも`indexed`として返す。
+- テスト: PDF/URL擬似入力を正常系として固定している。
+- 影響: API利用者が実ファイルやURL本文を正しく取り込めたと誤認し、ブラウザ内抽出だけを許す境界とも一致しない。
+- 解消条件: 正規APIでは`text`以外を422で拒否する。互換性が必要なら、実ファイル/URL取得ではないことを明示した別のテスト専用経路へ分離する。
+
+### A-014 — Low — 質問分析ダッシュボードがない
+
+- 要件・仕様: FR-015（Could）は質問一覧・Signal集計・エクスポートの簡易ダッシュボードを定義する。
+- 実装: JSON/CSV APIはあるが、Web UIのルートと画面はウェビナー、詳細、連携設定だけ。
+- 判定: Could要件のためMVP完了阻害ではないが、実装済みと読める概要記述とは不一致。
+- 解消条件: UIを追加するか、現行MVPはAPIエクスポートのみと明記する。
+
+### A-015 — Low — アプリのバージョン表示が一致しない
+
+- 文書・パッケージ: README、`pyproject.toml`、`koebinar.__version__`は`0.3.0`。
+- 実装: FastAPI/OpenAPIのversionは`0.1.0`、Web packageは`0.0.0`。
+- 解消条件: 単一のバージョン源へ統一するか、各値の用途を明記する。
+
+### A-016 — Low — テスト成功時にもDB接続未解放warningが多数出る
+
+- 証拠: Python全291件は通過したが、SQLite `ResourceWarning`を中心に220 warnings。
+- 影響: 現時点では失敗ではないが、テスト隔離の弱さ、ファイルロック、長時間実行時の資源枯渇を見逃しやすい。
+- 解消条件: fixture/lifespanで`Store.close()`を保証し、warningを段階的にエラー化する。
+
+## 6. 今回解消した文書上の不整合
+
+1. `requirements.md`内でURL取り込みがIn Scope/概要とOut of Scopeの両方に存在したため、MVP対象をPDF/PPTX/Textへ統一した。
+2. 要件定義書の改訂履歴を版順に並べ、現行メンテナンス版をv1.8とした。
+3. 仕様書の「v1.1を実装粒度へ落とす」という古い参照をv1.8へ更新した。
+4. Step 2を「機械的変換」とする記述を、実装どおり「OrcaRouterを使うがinstructionsは直接再送しない」へ修正した。
+5. `web/README.md`のViteテンプレート文を、実際の起動・認証・テスト・制約へ置換した。
+6. READMEの監査説明、Remotionのfail-closed公開契約、音声probeの検証境界を明記した。
+7. Lightsail手順の古い「画面上部のAPIトークン」表現を、現在のログイン画面へ更新した。
+8. PR #10で解消した音声合成、公開可否、Voice同意のCritical指摘を解消済みへ移し、残課題を現行実装に合わせた。
+
+## 7. 推奨修正順
+
+1. **P1**: A-003、A-004、A-006（承認フロー、Voice利用、公開構成の安全性）
+2. **P2**: A-007〜A-013（生成契約、ガードレール、評価、テナント検証、Retrieval、URL API）
+3. **P3**: A-014〜A-016（Could UI、メタデータ、テスト衛生）
+
+未解消のCriticalは0件になったが、現時点で「設計・仕様・実装・テストに乖離なし」とは判定できない。自動テストの緑は、上記の未検査契約を達成した証拠にはならない。

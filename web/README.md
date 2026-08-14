@@ -1,32 +1,49 @@
-# React + TypeScript + Vite
+# Koebinar Web UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Vite + React + TypeScriptで実装したKoebinarの運用者コンソールと公開視聴ページ。
 
-Currently, two official plugins are available:
+## 提供画面
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- `/login`: ワークスペースIDとアクセストークンによるログイン
+- `/`: PDF/PPTX/TXT/Markdown資料のブラウザ内抽出、資料選択、ウェビナー作成・一覧
+- `/webinars/{id}`: 進捗確認、台本編集、ステップ再実行、動画プレビュー、公開操作
+- `/settings/integrations`: OrcaRouter / ElevenLabsのテナント別BYOK設定とVoice一覧
+- `/watch/{id}`: 認証不要の公開動画・根拠付きQ&A
 
-## React Compiler
+既知の設計・実装差分は [`docs/audit_report.md`](../docs/audit_report.md) を参照。特に、Voice一覧は現時点でウェビナー作成フォームの選択値へ接続されていない。
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## ローカル起動
 
-## Expanding the Oxlint configuration
+先にリポジトリルートでAPIとWorkerを起動する。
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+export KOEBINAR_DEFAULT_AUTH_TOKEN="$(openssl rand -hex 24)"
+./scripts/start-stack.sh
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+別ターミナルでWeb UIを起動する。
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+既定APIは`http://127.0.0.1:8000/api/v1`。変更する場合は`web/.env`等で指定する。
+
+```dotenv
+VITE_API_BASE=http://127.0.0.1:8000/api/v1
+```
+
+単一テナント構成では、ログイン画面へワークスペースID`default`と`KOEBINAR_DEFAULT_AUTH_TOKEN`の値を入力する。トークンはブラウザの`localStorage`へ保存され、運用者APIのBearer tokenとして送信される。公開視聴APIへは送信しない。
+
+## テスト
+
+```bash
+npm test
+npm run lint
+npm run build
+npm run test:e2e
+```
+
+`test:e2e`は`web/playwright.config.ts`から一時APIとViteを起動する。Python仮想環境`.venv`、Playwright Chromium、Remotion依存が必要。外部APIはローカル互換モックを使い、実Remotion映像のブラウザ再生を検証する。ブラウザ検査はmuteだが、バックエンドのrenderer統合テストと`ffprobe`契約が映像・音声ストリームと尺を検証する。
