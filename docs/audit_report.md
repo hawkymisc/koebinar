@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 |---|---|
 | 監査日 | 2026-08-15 |
-| 基準コミット | `55920a7`（`origin/main`）+ `fix/issues-12-14` 作業差分 |
+| 基準コミット | `11f73a5`（`origin/main`）+ `fix/elevenlabs-key-validation` 作業差分 |
 | 対象 | `README.md`、`docs/`、API、Worker、Web UI、Remotion、テスト、Compose設定 |
 | 判定 | **部分整合**。Issue #12〜14の変更範囲はClean。リポジトリ全体には既報の未解消不整合が残る |
 | 未解消 | Critical 0件 / High 3件 / Medium 7件 / Low 3件（計13件） |
@@ -30,13 +30,13 @@
 
 | 検証 | 結果 | 証明する範囲 |
 |---|---|---|
-| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **295 passed**、分岐込み **90.43%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
+| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **301 passed**、分岐込み **90.32%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
 | `cd web && npm test` | **21 passed** | APIクライアント、認証UI、権限ヒント、Voice同意、ファイル抽出の単体契約 |
 | `cd web && npm run build` | **pass** | TypeScript型検査とVite本番ビルド |
 | `cd web && npm run lint` | **pass** | Oxlint静的検査 |
 | `cd web && npm run test:e2e` | **今回未再実行**（前回監査: 1 passed） | 今回は生成・動画経路を変更していない。前回は実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&Aを検証 |
 
-Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に218件のwarningが出た（既報A-016）。
+Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に226件のwarningが出た（既報A-016）。
 
 ### 2.1 Issue #12〜14 差分監査
 
@@ -46,6 +46,9 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 | 検証失敗時にセッションと既存integrationを維持し、秘密情報を返さない | 保存は検証成功後のみ。Webは422で`clearSession`を実行しない | 401/403/429/500、既存record、localStorage、レスポンス非漏えいを検証 | Clean |
 | OrcaRouter / ElevenLabsの必要アクセス範囲を一貫したUIで案内 | 両カードにnative `details/summary`の`[i]`ヒント、モバイル用viewport内配置 | 文言、要素数、ARIA名、本番build、lintを検証 | Clean |
 | 要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.9、tenant-auth-consoleをv1.1へ更新 | 実装・テスト・3文書を相互照合 | Clean |
+| TTS + Voices ReadのみのElevenLabsキーを登録可能 | Voice一覧を必須検証、User Readを使うSubscription照会を任意化し取得不能警告を保存 | Subscription 403で登録成功、metadata非表示、警告を検証 | Clean |
+| ユーザーが安全に失敗原因を判別可能 | 401/403/429/5xx/通信失敗を秘密情報なしの原因別422へ変換 | 原因別detailとprovider本文・キー非漏えいを検証 | Clean |
+| 追加修正後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.10、tenant-auth-consoleをv1.2へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
 
 今回の変更範囲で新たな未記録不整合は検出しなかった。第5章の13件は既存監査で追跡中のため、今回スコープのClean判定には混在させない。
 
@@ -198,6 +201,7 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 9. 登録時の外部プロバイダー認証エラーとKoebinarのオペレーター認証401を分離し、422契約と保存非更新を要件・仕様へ反映した。
 10. OrcaRouter / ElevenLabsで実際に利用する検証・生成APIと、期限・IP・スコープ・上限等の案内内容を仕様へ反映した。
 11. `tenant-auth-console.md`へ、検証失敗時のセッション維持、画面内エラー、`[i]`ヒントのアクセシビリティ契約を追加した。
+12. ElevenLabsのUser Readを任意化し、TTS + Voices Readキーの登録、プラン情報取得不能警告、安全な原因別エラーを実装・仕様・テストで整合させた。
 
 ## 7. 推奨修正順
 

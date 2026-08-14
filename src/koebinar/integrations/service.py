@@ -239,18 +239,40 @@ class IntegrationsService:
             client=self.http_client,
         )
         warnings: list[str] = []
+        sub: dict[str, Any] | None = None
         try:
-            sub = client.get_subscription()
-            client.list_voices()  # scope check
+            # Voice access proves that the key is usable for Koebinar without
+            # spending TTS credits. Subscription access is optional metadata.
+            client.list_voices()
+            try:
+                sub = client.get_subscription()
+            except ElevenLabsError as exc:
+                if exc.status_code in (401, 403):
+                    warnings.append(
+                        "User Read権限がないため、プランと使用量を表示できません。"
+                        "Voice一覧の接続は継続できます。TTS権限は初回生成時に検証されます。"
+                    )
+                elif exc.status_code == 429:
+                    warnings.append(
+                        "ElevenLabsのレート制限によりプランと使用量を取得できませんでした。"
+                        "時間をおいて再登録すると表示できる場合があります。"
+                    )
+                else:
+                    warnings.append(
+                        "ElevenLabsの一時的な応答エラーによりプランと使用量を取得できませんでした。"
+                    )
         except ElevenLabsError as exc:
             raise IntegrationError(
-                "ElevenLabs APIキーを検証できませんでした",
+                self._elevenlabs_voice_validation_message(exc),
                 code="provider_validation_failed",
                 status_code=422,
             ) from exc
         finally:
             if self.http_client is None:
                 client.close()
+
+        if sub is None:
+            return {"subscription_access": False}, warnings
 
         tier = str(sub.get("tier") or sub.get("plan") or "unknown")
         status = str(sub.get("status") or "active")
@@ -267,12 +289,36 @@ class IntegrationsService:
                     status_code=400,
                 )
         meta = {
+            "subscription_access": True,
             "tier": tier,
             "status": status,
             "character_count": char_count,
             "character_limit": char_limit,
         }
         return meta, warnings
+
+    @staticmethod
+    def _elevenlabs_voice_validation_message(exc: ElevenLabsError) -> str:
+        if exc.status_code == 401:
+            return (
+                "ElevenLabs APIキーが無効・期限切れ、またはVoices Read権限がありません。"
+                "キーの有効性とVoices Read権限を確認してください。"
+            )
+        if exc.status_code == 403:
+            return (
+                "ElevenLabsのVoice一覧へのアクセスが拒否されました。"
+                "Voices Read権限とIP allowlistを確認してください。"
+            )
+        if exc.status_code == 429:
+            return (
+                "ElevenLabs APIのレート制限に達したため、キーを検証できませんでした。"
+                "時間をおいて再試行してください。"
+            )
+        if exc.status_code is not None and exc.status_code >= 500:
+            return "ElevenLabsの一時的な障害により、APIキーを検証できませんでした。"
+        if exc.status_code is None:
+            return "ElevenLabsに接続できないため、APIキーを検証できませんでした。"
+        return f"ElevenLabsのVoice一覧を取得できませんでした（HTTP {exc.status_code}）。"
 
     def _to_view(self, rec: IntegrationRecord) -> IntegrationView:
         return IntegrationView(

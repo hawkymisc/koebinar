@@ -29,7 +29,7 @@ const PROVIDERS: Array<{
     name: 'ElevenLabs',
     description: 'クローン音声によるナレーション生成に使用します。',
     hint: 'TTSとVoices読み取り権限を持つキー',
-    permissionHint: '接続確認では GET /v1/user/subscription と GET /v1/voices、音声生成では POST /v1/text-to-speech/{voice_id} を使用します。ElevenLabsのキー作成時に、これらへアクセスできる権限を付与してください。有効期限・IP allowlist・スコープ制限も接続失敗要因になり得ます。Freeプランでは商用利用条件を確認し、下の確認欄にチェックしてください。',
+    permissionHint: '接続確認では必須の GET /v1/voices（Voices Read）を使用し、音声生成では POST /v1/text-to-speech/{voice_id}（Text to Speech）を使用します。GET /v1/user/subscription に必要な User Read（user_read）はプラン・使用量表示のための任意権限で、なくても接続できます。有効期限・IP allowlist・スコープ制限・クレジット上限も失敗要因になり得ます。Freeプランでは商用利用条件を確認し、下の確認欄にチェックしてください。',
   },
 ]
 
@@ -91,8 +91,7 @@ export function IntegrationSettingsPage() {
       setMessage(`${PROVIDERS.find((item) => item.id === provider)?.name} を接続しました。`)
       await reload()
     } catch (err) {
-      const detail = err instanceof ApiError ? ` ${err.message}` : ''
-      setError(`APIキーを検証できませんでした。${detail}`)
+      setError(err instanceof ApiError ? err.message : 'APIキーを検証できませんでした。')
     } finally {
       setBusy(null)
     }

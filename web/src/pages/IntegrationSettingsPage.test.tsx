@@ -20,6 +20,8 @@ describe('IntegrationSettingsPage provider permission hints', () => {
     expect(html).toContain('GET /v1/user/subscription')
     expect(html).toContain('GET /v1/voices')
     expect(html).toContain('POST /v1/text-to-speech/{voice_id}')
+    expect(html).toContain('任意')
+    expect(html).toContain('User Read（user_read）')
     expect(html).toContain('有効期限・IP allowlist・スコープ制限')
     expect(html).toContain('Freeプランでは商用利用条件を確認し、下の確認欄にチェックしてください')
   })

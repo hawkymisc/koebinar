@@ -143,6 +143,81 @@ def test_elevenlabs_provider_errors_use_non_authentication_status(
     assert store.integrations == {}
 
 
+def test_elevenlabs_registration_allows_missing_subscription_scope(
+    settings: Settings, store: Store
+):
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/voices"):
+            return httpx.Response(200, json={"voices": []})
+        if request.url.path.endswith("/user/subscription"):
+            return httpx.Response(403, json={"detail": "missing user subscription read"})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        svc = IntegrationsService(store=store, settings=settings, http_client=client)
+        view = svc.register(
+            Provider.ELEVENLABS,
+            IntegrationRegisterRequest(api_key="xi-tts-and-voices-read"),
+        )
+
+    assert view.status == IntegrationStatus.ACTIVE
+    assert view.meta["subscription_access"] is False
+    assert "tier" not in view.meta
+    assert any("User Read" in warning for warning in view.meta["warnings"])
+
+
+@pytest.mark.parametrize(
+    ("provider_status", "expected"),
+    [
+        (401, "無効・期限切れ"),
+        (403, "Voices Read権限とIP allowlist"),
+        (429, "レート制限"),
+        (500, "一時的な障害"),
+    ],
+)
+def test_elevenlabs_voice_validation_explains_safe_failure_reason(
+    settings: Settings,
+    store: Store,
+    provider_status: int,
+    expected: str,
+):
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/voices")
+        return httpx.Response(provider_status, json={"detail": "sensitive provider response"})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        svc = IntegrationsService(store=store, settings=settings, http_client=client)
+        with pytest.raises(IntegrationError) as error:
+            svc.register(
+                Provider.ELEVENLABS,
+                IntegrationRegisterRequest(api_key="xi-sensitive-key"),
+            )
+
+    assert error.value.status_code == 422
+    assert expected in str(error.value)
+    assert "sensitive provider response" not in str(error.value)
+    assert "xi-sensitive-key" not in str(error.value)
+
+
+def test_elevenlabs_voice_validation_explains_connection_failure(
+    settings: Settings, store: Store
+):
+    def disconnect(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("provider network detail", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(disconnect)) as client:
+        svc = IntegrationsService(store=store, settings=settings, http_client=client)
+        with pytest.raises(IntegrationError) as error:
+            svc.register(
+                Provider.ELEVENLABS,
+                IntegrationRegisterRequest(api_key="xi-sensitive-key"),
+            )
+
+    assert error.value.status_code == 422
+    assert "ElevenLabsに接続できない" in str(error.value)
+    assert "provider network detail" not in str(error.value)
+
+
 def test_elevenlabs_free_tier_requires_accept(svc_env):
     settings, store, client = svc_env
     svc = IntegrationsService(store=store, settings=settings, http_client=client)
