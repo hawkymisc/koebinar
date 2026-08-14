@@ -129,11 +129,12 @@ daida-aiの6ステップ構成を流用し、Step 5-6をRemotionレンダリン�
 ## 4. OrcaRouter統合仕様
 
 - 接続: OpenAI互換SDKで `base_url = https://api.orcarouter.ai/v1`。APIキーは**運用者の持ち込みキー（BYOK）**をintegrationsから復号して使用する。デモ用フォールバックキーは環境変数 `ORCAROUTER_API_KEY`（`ALLOW_SYSTEM_LLM_KEY=true` のときのみ使用）。
-- キー検証: 登録時にモデル一覧取得（`GET /v1/models`）等の軽量呼び出しで有効性を確認する。失敗時は401/403の内容に応じてキー再確認を案内する。残高・レート上限の照会APIが利用可能であれば併用する（要確認: OD-09）。
-- ルーティング: 既定はアダプティブルーティング任せ。台本生成など品質重視の呼び出しのみモデルヒント/指定を許可する設定値を持つ。
+- キー検証: 登録時にモデル一覧取得（`GET /v1/models`）等の軽量呼び出しで有効性を確認する。401だけをキー無効として扱う。OrcaRouterの403は残高不足、キー単位の上限、モデル許可、IP制限等も表すため、登録済みキーを自動的にinvalidへ変更せず、`error.code`を優先して案内する。残高・レート上限の照会APIが利用可能であれば併用する（要確認: OD-09）。
+- ルーティング: 既定モデルIDは公式のAuto Routerである`orcarouter/auto`とし、環境変数`KOEBINAR_LLM_MODEL`で上書き可能にする。`adaptive`はHosted APIの公開モデルIDではないため使用しない。台本生成など品質重視の呼び出しのみ明示モデルを許可する。
+- 構造化出力: outline/slides/script/Q&Aは`response_format={"type":"json_object"}`を第一選択とする。OrcaRouter公式仕様ではAnthropic upstreamは`response_format`非対応のため、`error.code=api_not_implemented`の400に限り、JSON出力を指示済みの同一プロンプトから`response_format`を外して1回再送する。他の400は再送しない。JSON object以外または不正JSONはStep失敗として扱う。
 - ガードレール: PII Shield、Prompt Injectionガードを有効化する（利用可能なプランの範囲で設定）。
 - 可観測性: 各運用者のOrcaRouterダッシュボードを一次のコスト・レイテンシ記録とし（BYOKのため運用者自身が自分の消費を確認できる）、アプリ側はrequest_id/model_id/prompt_versionのみ保存する。
-- フェイルオーバー: OrcaRouterの自動フェイルオーバーに依存。アプリ側はタイムアウト＋1回リトライ。
+- フェイルオーバー: OrcaRouterの自動フェイルオーバーに依存する。アプリ側はconnect/read/write/pool timeoutを分離し、非streamの長尺生成に対するread timeoutを`KOEBINAR_ORCAROUTER_READ_TIMEOUT_SEC`（既定600秒）で調整可能にする。Hosted APIの公式推奨秒数ではなく、OpenAI互換SDKの長時間応答を許容する運用既定値である。Read/Connect timeout、408/409、再試行可能な5xxは短い指数backoffで1回だけ再試行する。429は`Retry-After`（秒）が安全な待機上限内の場合だけその値を待って1回再試行する。400/401/403/404/425、`model_not_found`、`byok:key_unavailable`、`Retry-After`なしの429は同一要求を再試行しない。
 - embeddings: OrcaRouter経由を第一候補とし、対応不可の場合のみ直接プロバイダー呼び出しを許可（構成フラグで管理、要件AI-01の例外）。
 
 ## 5. TTS仕様（ElevenLabs Eleven v3 一本化）

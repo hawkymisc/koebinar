@@ -178,7 +178,7 @@ class GenerationSteps:
             try:
                 result = client.chat_json(messages)
             except LLMError as exc:
-                if exc.status_code in (401, 403):
+                if exc.status_code == 401:
                     self.integrations.mark_invalid(Provider.ORCAROUTER)
                 raise
             self.store.add_generation_log(

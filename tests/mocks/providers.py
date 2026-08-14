@@ -50,7 +50,7 @@ def install_mocks(
             json={
                 "object": "list",
                 "data": [
-                    {"id": "adaptive", "object": "model"},
+                    {"id": "orcarouter/auto", "object": "model"},
                     {"id": "gpt-mock", "object": "model"},
                 ],
             },
@@ -73,7 +73,7 @@ def install_mocks(
             json={
                 "id": "chatcmpl-mock",
                 "object": "chat.completion",
-                "model": body.get("model", "adaptive"),
+                "model": body.get("model", "orcarouter/auto"),
                 "choices": [
                     {
                         "index": 0,
