@@ -9,6 +9,7 @@ import {
   revokeElevenLabsVoiceConsent,
 } from '../api/endpoints'
 import type { IntegrationView, Provider, VoiceInfo } from '../api/types'
+import { API_KEY_PREFIXES, validateApiKeyPrefix } from './integrationKeyValidation'
 
 const PROVIDERS: Array<{
   id: Provider
@@ -21,15 +22,15 @@ const PROVIDERS: Array<{
     id: 'orcarouter',
     name: 'OrcaRouter',
     description: 'アウトライン・台本・Q&Aの生成に使用します。',
-    hint: 'モデル一覧の読み取り権限を持つキー',
+    hint: 'sk- から始まるAPIキー',
     permissionHint: '接続確認では GET /v1/models、ウェビナー構成・台本・Q&Aの生成では POST /v1/chat/completions を使用します。OrcaRouterのキー作成時に、モデル一覧の参照とチャット生成を実行できる権限を付与してください。有効期限・利用上限・IP制限も、接続または生成の失敗要因になり得ます。',
   },
   {
     id: 'elevenlabs',
     name: 'ElevenLabs',
     description: 'クローン音声によるナレーション生成に使用します。',
-    hint: 'TTSとVoices読み取り権限を持つキー',
-    permissionHint: '接続確認では GET /v1/user/subscription と GET /v1/voices、音声生成では POST /v1/text-to-speech/{voice_id} を使用します。ElevenLabsのキー作成時に、これらへアクセスできる権限を付与してください。有効期限・IP allowlist・スコープ制限も接続失敗要因になり得ます。Freeプランでは商用利用条件を確認し、下の確認欄にチェックしてください。',
+    hint: 'sk_ から始まるAPIキー',
+    permissionHint: '接続確認では必須の GET /v1/voices（Voices Read）を使用し、音声生成では POST /v1/text-to-speech/{voice_id}（Text to Speech）を使用します。GET /v1/user/subscription に必要な User Read（user_read）はプラン・使用量表示のための任意権限で、なくても接続できます。有効期限・IP allowlist・スコープ制限・クレジット上限も失敗要因になり得ます。Freeプランでは商用利用条件を確認し、下の確認欄にチェックしてください。',
   },
 ]
 
@@ -78,6 +79,12 @@ export function IntegrationSettingsPage() {
     event.preventDefault()
     const apiKey = keys[provider].trim()
     if (!apiKey) return
+    const prefixError = validateApiKeyPrefix(provider, apiKey)
+    if (prefixError) {
+      setError(prefixError)
+      setMessage(null)
+      return
+    }
     setBusy(provider)
     setMessage(null)
     try {
@@ -91,8 +98,7 @@ export function IntegrationSettingsPage() {
       setMessage(`${PROVIDERS.find((item) => item.id === provider)?.name} を接続しました。`)
       await reload()
     } catch (err) {
-      const detail = err instanceof ApiError ? ` ${err.message}` : ''
-      setError(`APIキーを検証できませんでした。${detail}`)
+      setError(err instanceof ApiError ? err.message : 'APIキーを検証できませんでした。')
     } finally {
       setBusy(null)
     }
@@ -194,6 +200,7 @@ export function IntegrationSettingsPage() {
           const connected = integration?.status === 'active'
           const usage = integration ? usageLabel(integration) : null
           const warnings = integration?.meta.warnings ?? []
+          const keyPrefix = API_KEY_PREFIXES[provider.id]
           return (
             <section className="integration-card" key={provider.id}>
               <div className="integration-heading">
@@ -250,10 +257,22 @@ export function IntegrationSettingsPage() {
                       type="password"
                       autoComplete="off"
                       required
+                      pattern={`${keyPrefix}.*`}
+                      title={`${provider.name}のAPIキーは ${keyPrefix} から始まる必要があります`}
+                      aria-describedby={`${provider.id}-api-key-prefix`}
                       value={keys[provider.id]}
                       onChange={(event) => setKeys((current) => ({ ...current, [provider.id]: event.target.value }))}
+                      onInvalid={(event) => {
+                        const current = event.currentTarget.value.trim()
+                        setError(current
+                          ? validateApiKeyPrefix(provider.id, current)
+                          : `${provider.name}のAPIキーを入力してください。`)
+                      }}
                       placeholder={provider.hint}
                     />
+                    <small id={`${provider.id}-api-key-prefix`}>
+                      {provider.name}のAPIキーは {keyPrefix} から始まります
+                    </small>
                   </div>
                   {provider.id === 'elevenlabs' && (
                     <label className="consent-row">

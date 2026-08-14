@@ -50,7 +50,7 @@ def install_mocks(
             json={
                 "object": "list",
                 "data": [
-                    {"id": "adaptive", "object": "model"},
+                    {"id": "orcarouter/auto", "object": "model"},
                     {"id": "gpt-mock", "object": "model"},
                 ],
             },
@@ -64,16 +64,26 @@ def install_mocks(
         key = _auth_bearer(request)
         if key != VALID_ORCA_KEY:
             return httpx.Response(401, json={"error": {"message": "invalid api key"}})
+        body = json.loads(request.content.decode("utf-8"))
+        if body.get("model") != "orcarouter/auto":
+            return httpx.Response(
+                401,
+                json={
+                    "error": {
+                        "code": "invalid_model",
+                        "message": "Use the orcarouter/auto router model.",
+                    }
+                },
+            )
         if orca_handler:
             return orca_handler(request)
-        body = json.loads(request.content.decode("utf-8"))
         content = _smart_llm_response(body)
         return httpx.Response(
             200,
             json={
                 "id": "chatcmpl-mock",
                 "object": "chat.completion",
-                "model": body.get("model", "adaptive"),
+                "model": body.get("model", "orcarouter/auto"),
                 "choices": [
                     {
                         "index": 0,

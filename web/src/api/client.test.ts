@@ -56,7 +56,7 @@ describe('apiRequest', () => {
     setSession('acme-secret', { id: 'acme', name: 'Acme株式会社' })
     const unauthorized = vi.fn()
     window.addEventListener('koebinar:unauthorized', unauthorized)
-    mockFetchOnce({ detail: 'ElevenLabs APIキーを検証できませんでした' }, { status: 422, ok: false })
+    mockFetchOnce({ detail: 'ElevenLabs APIキーが無効・期限切れ、またはVoices Read権限がありません。' }, { status: 422, ok: false })
 
     await expect(apiRequest('/integrations/elevenlabs', { method: 'POST' })).rejects.toMatchObject({
       status: 422,

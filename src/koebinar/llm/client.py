@@ -11,9 +11,18 @@ from koebinar.config import Settings, get_settings
 
 
 class LLMError(Exception):
-    def __init__(self, message: str, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        provider_code: str | None = None,
+        provider_message: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.provider_code = provider_code
+        self.provider_message = provider_message
 
 
 class OrcaRouterClient:
@@ -44,16 +53,51 @@ class OrcaRouterClient:
             "Content-Type": "application/json",
         }
 
+    def _safe_provider_text(self, value: Any, *, limit: int = 500) -> str | None:
+        if not isinstance(value, str):
+            return None
+        text = " ".join(value.split())
+        if not text:
+            return None
+        if self.api_key:
+            text = text.replace(self.api_key, "[redacted]")
+        return text[:limit]
+
+    def _response_error(self, operation: str, resp: httpx.Response) -> LLMError:
+        provider_code: str | None = None
+        provider_message: str | None = None
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            detail = payload.get("error") or payload.get("detail")
+            if isinstance(detail, dict):
+                provider_code = self._safe_provider_text(
+                    detail.get("code") or detail.get("type"), limit=100
+                )
+                provider_message = self._safe_provider_text(detail.get("message"))
+
+        message = f"OrcaRouter {operation} error: HTTP {resp.status_code}"
+        if provider_code:
+            message += f" [{provider_code}]"
+        if provider_message:
+            message += f" {provider_message}"
+        return LLMError(
+            message,
+            status_code=resp.status_code,
+            provider_code=provider_code,
+            provider_message=provider_message,
+        )
+
     def list_models(self) -> dict[str, Any]:
         url = f"{self.base_url}/models"
         try:
             resp = self._client.get(url, headers=self._headers())
         except httpx.HTTPError as exc:
             raise LLMError(f"OrcaRouter models request failed: {exc}") from exc
-        if resp.status_code in (401, 403):
-            raise LLMError("invalid or unauthorized OrcaRouter API key", status_code=resp.status_code)
         if resp.status_code >= 400:
-            raise LLMError(f"OrcaRouter models error: {resp.status_code} {resp.text}", status_code=resp.status_code)
+            raise self._response_error("models", resp)
         return resp.json()
 
     def chat_completions(
@@ -82,13 +126,10 @@ class OrcaRouterClient:
             except httpx.HTTPError as exc:
                 last_err = LLMError(f"OrcaRouter chat request failed: {exc}")
                 continue
-            if resp.status_code in (401, 403):
-                raise LLMError("invalid or unauthorized OrcaRouter API key", status_code=resp.status_code)
             if resp.status_code >= 400:
-                last_err = LLMError(
-                    f"OrcaRouter chat error: {resp.status_code} {resp.text}",
-                    status_code=resp.status_code,
-                )
+                last_err = self._response_error("chat", resp)
+                if resp.status_code in (401, 403):
+                    raise last_err
                 continue
             return resp.json()
         assert last_err is not None

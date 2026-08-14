@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     public_qa_rate_window_sec: int = 60
 
     # LLM / TTS model defaults
-    llm_model: str = "adaptive"
+    llm_model: str = "orcarouter/auto"
     tts_model: str = "eleven_v3"
     # The requested provider format is only a hint. Persisted artifacts derive
     # their extension and MIME type from the returned bytes.

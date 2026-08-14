@@ -142,7 +142,8 @@ def _scenarios() -> list[tuple[str, str, ScenarioFn]]:
     def i_bad_el(c: TestClient):
         response = c.post("/api/v1/integrations/elevenlabs", json={"api_key": INVALID_EL_KEY})
         assert response.status_code == 422
-        assert response.json()["detail"] == "ElevenLabs APIキーを検証できませんでした"
+        assert "無効・期限切れ" in response.json()["detail"]
+        assert "Voices Read権限" in response.json()["detail"]
         assert INVALID_EL_KEY not in response.text
 
     def i_empty_key(c: TestClient):
