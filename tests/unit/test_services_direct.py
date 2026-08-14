@@ -21,6 +21,7 @@ from koebinar.models import (
 from koebinar.pipeline.orchestrator import PipelineOrchestrator
 from koebinar.qa.service import QAService
 from koebinar.storage import Store
+from tests.helpers import sync_and_attest
 from tests.mocks.providers import (
     FREE_EL_KEY,
     INVALID_EL_KEY,
@@ -124,6 +125,7 @@ def test_pipeline_full_ja(svc_env):
     integ = IntegrationsService(store=store, settings=settings, http_client=client)
     integ.register(Provider.ORCAROUTER, IntegrationRegisterRequest(api_key=VALID_ORCA_KEY))
     integ.register(Provider.ELEVENLABS, IntegrationRegisterRequest(api_key=VALID_EL_KEY))
+    sync_and_attest(integ)
     ks = KnowledgeService(store=store)
     doc = ks.register(
         KnowledgeCreateRequest(

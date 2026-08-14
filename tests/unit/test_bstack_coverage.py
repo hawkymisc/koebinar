@@ -33,6 +33,7 @@ from koebinar.pipeline.renderer import (
 )
 from koebinar.storage import Store, get_store, open_store, reset_store, set_store
 from koebinar.worker import _handle_signal, main as worker_main, process_one, run_worker
+from tests.helpers import CLONE_VOICE_ID, attest_voice, sync_and_attest
 from tests.mocks.providers import VALID_EL_KEY, VALID_ORCA_KEY, install_mocks
 
 
@@ -243,13 +244,20 @@ def test_routes_jobs_and_missing(durable):
             assert c.get("/api/v1/webinars/nope/jobs").status_code == 404
             c.post("/api/v1/integrations/orcarouter", json={"api_key": VALID_ORCA_KEY})
             c.post("/api/v1/integrations/elevenlabs", json={"api_key": VALID_EL_KEY})
+            attest_voice(c, CLONE_VOICE_ID)
             doc = c.post(
                 "/api/v1/knowledge/documents",
                 json={"title": "t", "source_type": "text", "content": "body"},
             ).json()
             w = c.post(
                 "/api/v1/webinars",
-                json={"theme": "q", "document_ids": [doc["id"]], "auto_run": True, "sync": False},
+                json={
+                    "theme": "q",
+                    "document_ids": [doc["id"]],
+                    "voice_id": CLONE_VOICE_ID,
+                    "auto_run": True,
+                    "sync": False,
+                },
             ).json()
             jobs = c.get(f"/api/v1/webinars/{w['id']}/jobs").json()
             assert jobs["jobs"]
@@ -310,9 +318,9 @@ def test_run_worker_max_jobs(durable):
         IntegrationsService(store=st, settings=s, http_client=client).register(
             Provider.ORCAROUTER, IntegrationRegisterRequest(api_key=VALID_ORCA_KEY)
         )
-        IntegrationsService(store=st, settings=s, http_client=client).register(
-            Provider.ELEVENLABS, IntegrationRegisterRequest(api_key=VALID_EL_KEY)
-        )
+        integrations = IntegrationsService(store=st, settings=s, http_client=client)
+        integrations.register(Provider.ELEVENLABS, IntegrationRegisterRequest(api_key=VALID_EL_KEY))
+        sync_and_attest(integrations)
         doc = KnowledgeService(store=st).register(
             KnowledgeCreateRequest(title="t", source_type=SourceType.TEXT, content="c")
         )

@@ -8,10 +8,11 @@ from typing import Any, Callable
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.helpers import CLONE_VOICE_ID, attest_voice
 from tests.mocks.providers import FREE_EL_KEY, INVALID_EL_KEY, INVALID_ORCA_KEY, VALID_EL_KEY, VALID_ORCA_KEY
 
 
-def _reg(client: TestClient) -> None:
+def _reg(client: TestClient, *, consent: bool = True) -> None:
     assert client.post("/api/v1/integrations/orcarouter", json={"api_key": VALID_ORCA_KEY}).status_code == 200
     assert (
         client.post(
@@ -20,6 +21,9 @@ def _reg(client: TestClient) -> None:
         ).status_code
         == 200
     )
+    if consent:
+        # A-005: generation is fail-closed until the operator attests the voice.
+        attest_voice(client, CLONE_VOICE_ID)
 
 
 def _doc(client: TestClient, content: str, title: str = "Doc") -> str:
@@ -373,14 +377,14 @@ def _scenarios() -> list[tuple[str, str, ScenarioFn]]:
         # only EL key
         c.post("/api/v1/integrations/elevenlabs", json={"api_key": VALID_EL_KEY})
         res = _webinar(c, theme="no llm", auto_run=True)
-        assert res["status_code"] in (401, 400, 500)
+        assert res["status_code"] in (401, 400, 403, 500)
 
     def p_fail_no_tts_key_after_script(c: TestClient):
         c.post("/api/v1/integrations/orcarouter", json={"api_key": VALID_ORCA_KEY})
         # no EL — should fail at TTS
         did = _doc(c, "no tts key knowledge")
         res = _webinar(c, theme="no tts", document_ids=[did], auto_run=True)
-        assert res["status_code"] in (401, 400, 500)
+        assert res["status_code"] in (401, 400, 403, 500)
 
     out += [
         ("E401", "no docs", p_no_docs),
@@ -631,7 +635,7 @@ def _scenarios() -> list[tuple[str, str, ScenarioFn]]:
         assert res2["status_code"] == 200
         c.delete("/api/v1/integrations/elevenlabs")
         r = c.post(f"/api/v1/webinars/{res2['body']['id']}/steps/audio/run")
-        assert r.status_code in (401, 400, 500)
+        assert r.status_code in (401, 400, 403, 500)
 
     def v_unsupported_source_type(c: TestClient):
         r = c.post(

@@ -36,6 +36,7 @@ from koebinar.pipeline.timeline import frames_to_seconds, validate_timeline
 from koebinar.pipeline.tts import TTSAdapter, wav_duration_sec
 from koebinar.qa.service import QAService
 from koebinar.storage import IntegrationRecord, Store, get_store, reset_store, set_store
+from tests.helpers import CLONE_VOICE_ID, attest_voice, sync_and_attest
 from tests.mocks.providers import VALID_EL_KEY, VALID_ORCA_KEY, install_mocks
 
 
@@ -226,7 +227,10 @@ def test_orchestrator_errors(settings: Settings, store: Store):
         svc = IntegrationsService(store=store, settings=settings, http_client=client)
         svc.register(Provider.ORCAROUTER, IntegrationRegisterRequest(api_key=VALID_ORCA_KEY))
         svc.register(Provider.ELEVENLABS, IntegrationRegisterRequest(api_key=VALID_EL_KEY))
-        w = orch.create_webinar(WebinarCreateRequest(theme="t", auto_run=False))
+        sync_and_attest(svc)
+        w = orch.create_webinar(
+            WebinarCreateRequest(theme="t", auto_run=False, voice_id=CLONE_VOICE_ID)
+        )
         with pytest.raises(PipelineError):
             orch.run_from(w.id, "bogus_step")
         with pytest.raises(PipelineError):
@@ -245,25 +249,25 @@ def test_renderer_validate_and_remotion(settings: Settings, store: Store):
         r.render("w", {"fps": 0, "total_frames": 0, "slides": []}, [])
     # With force_render_double in test settings, remotion is treated unavailable
     assert remotion_available(settings) is False
-    # When Remotion is preferred but invoke fails, same entry falls back to double
+    # A Remotion failure must fail closed; production code never silently uses a double.
     settings.force_render_double = False
     with patch("koebinar.pipeline.renderer.remotion_available", return_value=True):
         with patch(
             "koebinar.pipeline.renderer.invoke_remotion_render",
             side_effect=RenderError("chromium missing"),
         ):
-            uri, meta = r.render(
-                "w",
-                {
-                    "fps": 30,
-                    "total_frames": 30,
-                    "slides": [{"start_frame": 0, "end_frame": 30, "title": "t", "duration_frames": 30}],
-                },
-                [{"title": "t"}],
-                force_double=False,
-            )
-            assert meta["renderer"] == "double"
-            assert "chromium" in (meta.get("reason") or "")
+            with pytest.raises(RenderError, match="chromium missing"):
+                r.render(
+                    "w",
+                    {
+                        "fps": 30,
+                        "total_frames": 30,
+                        "slides": [{"start_frame": 0, "end_frame": 30, "title": "t", "duration_frames": 30}],
+                    },
+                    [{"title": "t"}],
+                    force_double=False,
+                )
+            assert r.used_double is False
 
 
 def test_timeline_validate_overlap_and_fps():
@@ -340,6 +344,8 @@ def test_tts_auth_failure_marks_invalid(settings: Settings, store: Store):
         status=IntegrationStatus.ACTIVE,
     )
     integ = IntegrationsService(store=store, settings=settings, http_client=client)
+    with install_mocks():
+        sync_and_attest(integ)
     tts = TTSAdapter(store=store, settings=settings, integrations=integ, http_client=client)
     prepared = {
         "slides": [{"slide_index": 0, "sentences": ["Hello world"], "title": "t"}],
@@ -459,6 +465,7 @@ def test_tts_empty_audio_and_non_wav(settings: Settings, store: Store):
         client = httpx.Client()
         integ = IntegrationsService(store=store, settings=settings, http_client=client)
         integ.register(Provider.ELEVENLABS, IntegrationRegisterRequest(api_key=VALID_EL_KEY))
+        sync_and_attest(integ)
         tts = TTSAdapter(store=store, settings=settings, integrations=integ, http_client=client)
         prepared = {
             "slides": [{"slide_index": 0, "sentences": ["Hi"], "title": "t"}],
@@ -466,11 +473,11 @@ def test_tts_empty_audio_and_non_wav(settings: Settings, store: Store):
         }
         with respx.mock:
             respx.post(url__regex=r".*/text-to-speech/.*").respond(200, content=b"")
-            durs, meta = tts.synthesize_script("w2", prepared, "voice_x", "ja")
+            durs, meta = tts.synthesize_script("w2", prepared, CLONE_VOICE_ID, "ja")
             assert durs and durs[0]["duration_sec"] > 0
         with respx.mock:
             respx.post(url__regex=r".*/text-to-speech/.*").respond(200, content=b"NOTWAVDATA")
-            durs2, _ = tts.synthesize_script("w3", prepared, "voice_x", "en")
+            durs2, _ = tts.synthesize_script("w3", prepared, CLONE_VOICE_ID, "en")
             assert durs2
         client.close()
 
@@ -481,8 +488,9 @@ def test_load_artifact_from_disk(settings: Settings, store: Store):
         integ = IntegrationsService(store=store, settings=settings, http_client=client)
         integ.register(Provider.ORCAROUTER, IntegrationRegisterRequest(api_key=VALID_ORCA_KEY))
         integ.register(Provider.ELEVENLABS, IntegrationRegisterRequest(api_key=VALID_EL_KEY))
+        sync_and_attest(integ)
         orch = PipelineOrchestrator(store=store, settings=settings, http_client=client)
-        w = orch.create_webinar(WebinarCreateRequest(theme="disk", auto_run=True, voice_id="voice_clone_ja_en_01"))
+        w = orch.create_webinar(WebinarCreateRequest(theme="disk", auto_run=True, voice_id=CLONE_VOICE_ID))
         # strip artifact list but keep files on disk
         arts = list(w.artifacts)
         w.artifacts = []

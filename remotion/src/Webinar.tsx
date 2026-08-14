@@ -1,5 +1,12 @@
 import React from "react";
-import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
+import {
+  AbsoluteFill,
+  Audio,
+  Sequence,
+  staticFile,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
 
 export type SlideInput = {
   title?: string;
@@ -15,17 +22,53 @@ export type TimelineSlide = {
   duration_frames?: number;
 };
 
+export type TimelineAudioClip = {
+  slide_index?: number;
+  sentence_index?: number;
+  start_frame?: number;
+  end_frame?: number;
+  duration_frames?: number;
+  duration_sec?: number;
+  /** Relative path staged into Remotion's public directory. */
+  src?: string;
+  audio_src?: string;
+  audio_uri?: string;
+};
+
 export type WebinarProps = {
   timeline: {
     fps?: number;
     total_frames?: number;
     slides?: TimelineSlide[];
+    audio_clips?: TimelineAudioClip[];
   };
   slides: SlideInput[];
   fps?: number;
   width?: number;
   height?: number;
 };
+
+const AudioTracks: React.FC<{ clips: TimelineAudioClip[] }> = ({ clips }) => (
+  <AbsoluteFill>
+    {clips.map((clip, index) => {
+      const src = clip.src || clip.audio_src;
+      if (!src) return null;
+      const from = Math.max(0, clip.start_frame ?? 0);
+      const inferredDuration = (clip.end_frame ?? from) - from;
+      const duration = Math.max(1, clip.duration_frames ?? inferredDuration);
+      return (
+        <Sequence
+          key={`${clip.slide_index ?? 0}-${clip.sentence_index ?? index}-${index}`}
+          from={from}
+          durationInFrames={duration}
+          layout="none"
+        >
+          <Audio src={staticFile(src)} />
+        </Sequence>
+      );
+    })}
+  </AbsoluteFill>
+);
 
 const themeColors: Record<string, { bg: string; accent: string; text: string }> = {
   tech: { bg: "#0b1220", accent: "#22d3ee", text: "#e2e8f0" },
@@ -77,26 +120,33 @@ const SlideView: React.FC<{ slide: SlideInput; index: number }> = ({ slide, inde
 
 export const WebinarComposition: React.FC<WebinarProps> = ({ timeline, slides }) => {
   const tlSlides = timeline?.slides || [];
+  const audioClips = timeline?.audio_clips || [];
   if (tlSlides.length === 0) {
     return (
-      <AbsoluteFill style={{ backgroundColor: "#0b1220", color: "#fff", padding: 80 }}>
-        <h1>Koebinar</h1>
-      </AbsoluteFill>
+      <>
+        <AbsoluteFill style={{ backgroundColor: "#0b1220", color: "#fff", padding: 80 }}>
+          <h1>Koebinar</h1>
+        </AbsoluteFill>
+        <AudioTracks clips={audioClips} />
+      </>
     );
   }
 
   return (
-    <AbsoluteFill>
-      {tlSlides.map((ts, i) => {
-        const start = ts.start_frame ?? 0;
-        const dur = ts.duration_frames ?? Math.max(1, (ts.end_frame ?? start + 30) - start);
-        const slideProps = slides[i] || slides[ts.slide_index ?? i] || { title: ts.title };
-        return (
-          <Sequence key={i} from={start} durationInFrames={Math.max(1, dur)}>
-            <SlideView slide={slideProps} index={i} />
-          </Sequence>
-        );
-      })}
-    </AbsoluteFill>
+    <>
+      <AbsoluteFill>
+        {tlSlides.map((ts, i) => {
+          const start = ts.start_frame ?? 0;
+          const dur = ts.duration_frames ?? Math.max(1, (ts.end_frame ?? start + 30) - start);
+          const slideProps = slides[i] || slides[ts.slide_index ?? i] || { title: ts.title };
+          return (
+            <Sequence key={i} from={start} durationInFrames={Math.max(1, dur)}>
+              <SlideView slide={slideProps} index={i} />
+            </Sequence>
+          );
+        })}
+      </AbsoluteFill>
+      <AudioTracks clips={audioClips} />
+    </>
   );
 };

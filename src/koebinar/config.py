@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # LLM / TTS model defaults
     llm_model: str = "adaptive"
     tts_model: str = "eleven_v3"
+    # The requested provider format is only a hint. Persisted artifacts derive
+    # their extension and MIME type from the returned bytes.
+    tts_output_format: str = "mp3_44100_128"
     prompt_version: str = "v1.0"
 
     # Pipeline execution: True = run steps in API process (tests/dev).
@@ -57,6 +60,8 @@ class Settings(BaseSettings):
     remotion_project_dir: Path = Path("remotion")
     remotion_timeout_sec: float = 180.0
     force_render_double: bool = False
+    # Maximum accepted difference between the timeline and probed media.
+    audio_duration_tolerance_sec: float = 0.5
 
     # Worker
     worker_poll_interval_sec: float = 0.25

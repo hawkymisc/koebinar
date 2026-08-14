@@ -74,6 +74,40 @@ def test_build_and_validate_timeline():
     assert validate_timeline({"fps": 0, "total_frames": 0, "slides": []})
 
 
+def test_build_timeline_rejects_audio_for_a_missing_slide():
+    with pytest.raises(ValueError, match="slide_index out of range"):
+        build_timeline(
+            [{"title": "Only slide"}],
+            [
+                {
+                    "slide_index": 1,
+                    "sentence_index": 0,
+                    "duration_sec": 1.0,
+                    "audio_uri": "orphan.wav",
+                }
+            ],
+            fps=30,
+        )
+
+
+def test_validate_timeline_rejects_audio_for_a_missing_slide():
+    timeline = build_timeline(
+        [{"title": "Only slide"}],
+        [
+            {
+                "slide_index": 0,
+                "sentence_index": 0,
+                "duration_sec": 1.0,
+                "audio_uri": "audio.wav",
+            }
+        ],
+        fps=30,
+    )
+    timeline["audio_clips"][0]["slide_index"] = 1
+
+    assert "audio clip 0 references missing slide 1" in validate_timeline(timeline)
+
+
 def test_tts_helpers():
     k1 = cache_key("hi", "v1", "m1")
     k2 = cache_key("hi", "v1", "m1")

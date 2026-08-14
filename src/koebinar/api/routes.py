@@ -12,6 +12,7 @@ from koebinar.api.deps import AppState, get_app_state, get_tenant_services, requ
 from koebinar.auth import AuthConfigurationError, AuthPrincipal, authenticate_login
 from koebinar.integrations.service import IntegrationError
 from koebinar.models import (
+    VOICE_ATTESTATION_VERSION,
     IntegrationRegisterRequest,
     KnowledgeCreateRequest,
     LoginRequest,
@@ -20,6 +21,7 @@ from koebinar.models import (
     QuestionCreateRequest,
     ScriptPatchRequest,
     ViewerQuestionCreateRequest,
+    VoiceConsentRequest,
     WebinarCreateRequest,
     WebinarStatus,
 )
@@ -329,12 +331,47 @@ def build_router() -> APIRouter:
 
     @router.get("/integrations/elevenlabs/voices", dependencies=[Depends(require_auth)])
     def list_voices(request: Request) -> dict[str, Any]:
+        """Read-only: syncs provider metadata, never grants or implies consent."""
         state = get_tenant_services(request)
         try:
             voices = state.integrations.get_voices()
         except IntegrationError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-        return {"voices": [v.model_dump(mode="json") for v in voices]}
+        return {
+            "voices": [v.model_dump(mode="json") for v in voices],
+            "attestation_version": VOICE_ATTESTATION_VERSION,
+        }
+
+    @router.post("/integrations/elevenlabs/voices/{voice_id}/consent")
+    def attest_voice_consent(
+        voice_id: str,
+        body: VoiceConsentRequest,
+        request: Request,
+        principal: AuthPrincipal = Depends(require_auth),
+    ) -> dict[str, Any]:
+        state = get_tenant_services(request)
+        try:
+            ref = state.integrations.attest_voice_consent(
+                voice_id,
+                accepted=body.accepted,
+                attestation_version=body.attestation_version,
+                attested_by=principal.tenant_id,
+            )
+        except IntegrationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return ref.to_voice_info().model_dump(mode="json")
+
+    @router.delete(
+        "/integrations/elevenlabs/voices/{voice_id}/consent",
+        dependencies=[Depends(require_auth)],
+    )
+    def revoke_voice_consent(voice_id: str, request: Request) -> dict[str, Any]:
+        state = get_tenant_services(request)
+        try:
+            ref = state.integrations.revoke_voice_consent(voice_id)
+        except IntegrationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return ref.to_voice_info().model_dump(mode="json")
 
     # --- Questions ---
     @router.post("/questions", dependencies=[Depends(require_auth)])

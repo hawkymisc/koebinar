@@ -6,7 +6,7 @@
  * Uses @remotion/renderer when installed. Writes a structured error to stderr
  * and exits non-zero when Chromium/Remotion cannot run.
  */
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,6 +17,7 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === "--props") out.props = argv[++i];
     else if (argv[i] === "--output") out.output = argv[++i];
+    else if (argv[i] === "--public-dir") out.publicDir = argv[++i];
   }
   return out;
 }
@@ -24,12 +25,14 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv);
   if (!args.props || !args.output) {
-    console.error("Usage: node render.mjs --props <file.json> --output <file.mp4>");
+    console.error("Usage: node render.mjs --props <file.json> --output <file.mp4> [--public-dir <dir>]");
     process.exit(2);
   }
   const props = JSON.parse(readFileSync(args.props, "utf8"));
   const output = resolve(args.output);
   mkdirSync(dirname(output), { recursive: true });
+  const publicDir = args.publicDir ? resolve(args.publicDir) : undefined;
+  if (publicDir) mkdirSync(publicDir, { recursive: true });
 
   let bundle;
   let renderMedia;
@@ -46,10 +49,12 @@ async function main() {
   const entry = resolve(__dirname, "src/index.ts");
   const browserExecutable = process.env.KOEBINAR_REMOTION_BROWSER_EXECUTABLE || undefined;
   console.log(JSON.stringify({ phase: "bundle", entry }));
-  const bundled = await bundle({
+  const bundleOptions = {
     entryPoint: entry,
     webpackOverride: (config) => config,
-  });
+  };
+  if (publicDir) bundleOptions.publicDir = publicDir;
+  const bundled = await bundle(bundleOptions);
 
   const fps = props.fps || props.timeline?.fps || 30;
   const durationInFrames = Math.max(1, props.timeline?.total_frames || 90);
