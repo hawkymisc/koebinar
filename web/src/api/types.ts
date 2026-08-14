@@ -157,6 +157,18 @@ export interface VoiceInfo {
   name: string
   category: string
   labels: Record<string, string>
+  active: boolean
+  consent_status: 'required' | 'attested' | 'not_required'
+  consent_source: 'operator_attestation' | null
+  attested_at: string | null
+  attested_by: string | null
+  attestation_version: string | null
+  usable: boolean
+}
+
+export interface VoiceListResponse {
+  voices: VoiceInfo[]
+  attestation_version: string
 }
 
 export interface Citation {

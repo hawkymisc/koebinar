@@ -71,10 +71,50 @@ class Provider(str, Enum):
     ELEVENLABS = "elevenlabs"
 
 
+# Reserved pseudo-voice used by the existing system-key/demo fallback path. It
+# is not a provider Voice and therefore has no tenant consent record to collect.
+SYSTEM_FALLBACK_VOICE_ID = "default"
+
+
 class IntegrationStatus(str, Enum):
     ACTIVE = "active"
     INVALID = "invalid"
     DELETED = "deleted"
+
+
+class VoiceConsentStatus(str, Enum):
+    """Consent state of a provider voice for the owning tenant.
+
+    ``required`` は「同意が必要だが未取得」を意味する fail-closed 初期値。
+    """
+
+    REQUIRED = "required"
+    ATTESTED = "attested"
+    NOT_REQUIRED = "not_required"
+
+
+class VoiceConsentSource(str, Enum):
+    """How an ``attested`` state was produced. Absent source is never trusted."""
+
+    OPERATOR_ATTESTATION = "operator_attestation"
+
+
+# 同意文面のバージョン。文面を変えたら必ず上げ、旧versionの同意は再取得させる。
+VOICE_ATTESTATION_VERSION = "voice-consent-v1"
+SUPPORTED_ATTESTATION_VERSIONS = frozenset({VOICE_ATTESTATION_VERSION})
+
+# ElevenLabs が提供する共有ライブラリ音声。話者本人の同意はプロバイダ側で
+# 取得済みのため、テナントによる attestation を要求しない。
+# ここに載らない category (cloned / professional / 空文字 / 未知) は全て
+# 同意必須として fail closed に倒す。
+CONSENT_EXEMPT_VOICE_CATEGORIES = frozenset({"premade"})
+
+
+def consent_status_for_category(category: str) -> VoiceConsentStatus:
+    normalized = (category or "").strip().lower()
+    if normalized in CONSENT_EXEMPT_VOICE_CATEGORIES:
+        return VoiceConsentStatus.NOT_REQUIRED
+    return VoiceConsentStatus.REQUIRED
 
 
 class Answerability(str, Enum):
@@ -232,10 +272,113 @@ class SessionResponse(BaseModel):
 
 
 class VoiceInfo(BaseModel):
+    """Provider metadata plus the tenant-scoped consent state of a voice."""
+
     voice_id: str
     name: str
     category: str = "cloned"
     labels: dict[str, str] = Field(default_factory=dict)
+    active: bool = True
+    consent_status: VoiceConsentStatus = VoiceConsentStatus.REQUIRED
+    consent_source: Optional[VoiceConsentSource] = None
+    attested_at: Optional[datetime] = None
+    attested_by: Optional[str] = None
+    attestation_version: Optional[str] = None
+    usable: bool = False
+
+
+class VoiceRef(BaseModel):
+    """Tenant-scoped consent record for one provider voice.
+
+    Persisted in ``store.voice_refs``. ``consent_status=attested`` is only
+    honoured together with an explicit ``consent_source``; legacy rows written
+    by the old auto-``consent_flag`` code path therefore migrate to
+    ``required`` (fail closed) — see :meth:`from_stored`.
+    """
+
+    tenant_id: str = "default"
+    integration_id: str = ""
+    provider: Provider = Provider.ELEVENLABS
+    voice_id: str
+    name: str = ""
+    category: str = "unknown"
+    labels: dict[str, str] = Field(default_factory=dict)
+    active: bool = True
+    consent_status: VoiceConsentStatus = VoiceConsentStatus.REQUIRED
+    consent_source: Optional[VoiceConsentSource] = None
+    attested_at: Optional[datetime] = None
+    attested_by: Optional[str] = None
+    attestation_version: Optional[str] = None
+    revoked_at: Optional[datetime] = None
+    synced_at: datetime = Field(default_factory=utcnow)
+
+    @classmethod
+    def from_stored(cls, data: dict[str, Any]) -> "VoiceRef":
+        """Load a persisted row, downgrading anything not provably attested.
+
+        Rows written before A-005 carry ``consent_flag: true`` derived purely
+        from a voice-list fetch. They are migrated to ``required`` so no
+        presumed consent survives into the typed state. No dedicated database
+        migration is needed: ``voice_refs`` is a JSON KV record, and this
+        lazy normalization is safe for existing rows and future restarts.
+        """
+        payload = dict(data)
+        payload.pop("consent_flag", None)
+        status = payload.get("consent_status")
+        source = payload.get("consent_source")
+        category = payload.get("category") or ""
+        if status not in {s.value for s in VoiceConsentStatus}:
+            # Legacy / unknown row: recompute from category, never from a boolean.
+            payload["consent_status"] = consent_status_for_category(category)
+            payload["consent_source"] = None
+        elif (
+            status == VoiceConsentStatus.NOT_REQUIRED.value
+            and consent_status_for_category(category) != VoiceConsentStatus.NOT_REQUIRED
+        ):
+            # ``not_required`` is only valid for a known exempt provider
+            # category. Unknown or changed metadata must fail closed.
+            payload["consent_status"] = VoiceConsentStatus.REQUIRED
+            payload["consent_source"] = None
+        elif status == VoiceConsentStatus.ATTESTED.value and source != VoiceConsentSource.OPERATOR_ATTESTATION.value:
+            payload["consent_status"] = VoiceConsentStatus.REQUIRED
+            payload["consent_source"] = None
+        return cls.model_validate(payload)
+
+    def is_usable(self) -> bool:
+        if not self.active:
+            return False
+        if self.consent_status == VoiceConsentStatus.NOT_REQUIRED:
+            return True
+        return (
+            self.consent_status == VoiceConsentStatus.ATTESTED
+            and self.consent_source == VoiceConsentSource.OPERATOR_ATTESTATION
+            and self.attestation_version in SUPPORTED_ATTESTATION_VERSIONS
+            and self.attested_at is not None
+            and bool(self.attested_by)
+            and self.revoked_at is None
+        )
+
+    def to_voice_info(self) -> VoiceInfo:
+        return VoiceInfo(
+            voice_id=self.voice_id,
+            name=self.name or "unnamed",
+            category=self.category,
+            labels=dict(self.labels),
+            active=self.active,
+            consent_status=self.consent_status,
+            consent_source=self.consent_source,
+            attested_at=self.attested_at,
+            attested_by=self.attested_by,
+            attestation_version=self.attestation_version,
+            usable=self.is_usable(),
+        )
+
+
+class VoiceConsentRequest(BaseModel):
+    """Explicit operator attestation for one cloned/custom voice."""
+
+    accepted: bool = False
+    attestation_version: str = VOICE_ATTESTATION_VERSION
 
 
 class QuestionCreateRequest(BaseModel):

@@ -12,6 +12,7 @@ from koebinar.config import Settings, reset_settings_cache
 from koebinar.main import create_app
 from koebinar.storage import open_store, set_store
 from koebinar.worker import process_one
+from tests.helpers import CLONE_VOICE_ID, attest_voice
 from tests.mocks.providers import VALID_EL_KEY, VALID_ORCA_KEY, install_mocks
 
 
@@ -92,6 +93,7 @@ def test_e2e_async_pipeline_poll(async_env):
     s, store, c = async_env
     c.post("/api/v1/integrations/orcarouter", json={"api_key": VALID_ORCA_KEY})
     c.post("/api/v1/integrations/elevenlabs", json={"api_key": VALID_EL_KEY})
+    attest_voice(c, CLONE_VOICE_ID)
     doc = c.post(
         "/api/v1/knowledge/documents",
         json={
@@ -129,6 +131,7 @@ def test_e2e_async_step_rerun(async_env):
     s, store, c = async_env
     c.post("/api/v1/integrations/orcarouter", json={"api_key": VALID_ORCA_KEY})
     c.post("/api/v1/integrations/elevenlabs", json={"api_key": VALID_EL_KEY})
+    attest_voice(c, CLONE_VOICE_ID)
     doc = c.post(
         "/api/v1/knowledge/documents",
         json={"title": "R", "source_type": "text", "content": "rerun knowledge content"},

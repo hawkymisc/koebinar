@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ApiError } from '../api/client'
 import {
+  attestElevenLabsVoice,
   deleteIntegration,
   listElevenLabsVoices,
   listIntegrations,
   registerIntegration,
+  revokeElevenLabsVoiceConsent,
 } from '../api/endpoints'
 import type { IntegrationView, Provider, VoiceInfo } from '../api/types'
 
@@ -44,6 +46,9 @@ export function IntegrationSettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [voices, setVoices] = useState<VoiceInfo[]>([])
+  const [attestationVersion, setAttestationVersion] = useState<string | null>(null)
+  const [consentChecks, setConsentChecks] = useState<Record<string, boolean>>({})
+  const [busyVoice, setBusyVoice] = useState<string | null>(null)
   const [loadingVoices, setLoadingVoices] = useState(false)
 
   const byProvider = useMemo(
@@ -75,6 +80,11 @@ export function IntegrationSettingsPage() {
     try {
       await registerIntegration(provider, apiKey, provider === 'elevenlabs' && acceptFreeTier)
       setKeys((current) => ({ ...current, [provider]: '' }))
+      if (provider === 'elevenlabs') {
+        setVoices([])
+        setAttestationVersion(null)
+        setConsentChecks({})
+      }
       setMessage(`${PROVIDERS.find((item) => item.id === provider)?.name} を接続しました。`)
       await reload()
     } catch (err) {
@@ -89,7 +99,11 @@ export function IntegrationSettingsPage() {
     setMessage(null)
     try {
       await deleteIntegration(provider)
-      if (provider === 'elevenlabs') setVoices([])
+      if (provider === 'elevenlabs') {
+        setVoices([])
+        setAttestationVersion(null)
+        setConsentChecks({})
+      }
       setMessage('連携を解除しました。')
       await reload()
     } catch (err) {
@@ -102,13 +116,59 @@ export function IntegrationSettingsPage() {
   async function handleVoices() {
     setLoadingVoices(true)
     try {
-      setVoices(await listElevenLabsVoices())
+      const response = await listElevenLabsVoices()
+      setVoices(response.voices)
+      setAttestationVersion(response.attestation_version)
+      setConsentChecks({})
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Voice一覧を取得できませんでした。')
     } finally {
       setLoadingVoices(false)
     }
+  }
+
+  function replaceVoice(updated: VoiceInfo) {
+    setVoices((current) => current.map((voice) => (
+      voice.voice_id === updated.voice_id ? updated : voice
+    )))
+  }
+
+  async function handleConsent(voice: VoiceInfo) {
+    if (!attestationVersion || !consentChecks[voice.voice_id]) return
+    setBusyVoice(voice.voice_id)
+    setMessage(null)
+    try {
+      replaceVoice(await attestElevenLabsVoice(voice.voice_id, attestationVersion))
+      setConsentChecks((current) => ({ ...current, [voice.voice_id]: false }))
+      setMessage(`${voice.name} の利用同意を記録しました。`)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Voiceの同意を記録できませんでした。')
+    } finally {
+      setBusyVoice(null)
+    }
+  }
+
+  async function handleRevokeConsent(voice: VoiceInfo) {
+    setBusyVoice(voice.voice_id)
+    setMessage(null)
+    try {
+      replaceVoice(await revokeElevenLabsVoiceConsent(voice.voice_id))
+      setMessage(`${voice.name} の利用同意を取り消しました。`)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Voiceの同意を取り消せませんでした。')
+    } finally {
+      setBusyVoice(null)
+    }
+  }
+
+  function voiceConsentLabel(voice: VoiceInfo): string {
+    if (!voice.active) return '利用不可'
+    if (voice.consent_status === 'not_required') return '同意不要（premade等）'
+    if (voice.consent_status === 'attested' && voice.usable) return '同意済み・利用可'
+    return '同意未取得・利用不可'
   }
 
   return (
@@ -202,13 +262,64 @@ export function IntegrationSettingsPage() {
 
       {voices.length > 0 && (
         <section className="card voice-section">
-          <div><p className="eyebrow">ELEVENLABS</p><h2>利用可能なVoice</h2></div>
+          <div>
+            <p className="eyebrow">ELEVENLABS</p>
+            <h2>利用可能なVoice</h2>
+            <p className="voice-consent-help">
+              クローンVoiceは、話者本人から必要な同意を取得済みであることを確認してから、Voiceごとに利用同意を記録してください。Voice一覧の取得だけでは同意されません。
+            </p>
+          </div>
           <ul className="voice-list">
             {voices.map((voice) => (
               <li key={voice.voice_id}>
-                <strong>{voice.name}</strong>
-                <span>{voice.category}</span>
+                <div className="voice-heading">
+                  <strong>{voice.name}</strong>
+                  <span className={`voice-consent-status status-${voice.consent_status}`}>
+                    {voiceConsentLabel(voice)}
+                  </span>
+                </div>
+                <span>カテゴリ: {voice.category}</span>
                 <code>{voice.voice_id}</code>
+                {voice.attested_at && (
+                  <span>同意記録: {new Date(voice.attested_at).toLocaleString('ja-JP')}</span>
+                )}
+                {voice.consent_status === 'required' && voice.active && (
+                  <>
+                    <label className="consent-row voice-consent-row">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(consentChecks[voice.voice_id])}
+                        onChange={(event) => setConsentChecks((current) => ({
+                          ...current,
+                          [voice.voice_id]: event.target.checked,
+                        }))}
+                        disabled={busyVoice !== null}
+                      />
+                      <span>話者本人の同意取得と、このVoiceの利用条件を確認しました</span>
+                    </label>
+                    <button
+                      className="btn btn-primary"
+                      type="button"
+                      onClick={() => void handleConsent(voice)}
+                      disabled={!attestationVersion || !consentChecks[voice.voice_id] || busyVoice !== null}
+                    >
+                      {busyVoice === voice.voice_id ? '記録中…' : '利用同意を記録'}
+                    </button>
+                  </>
+                )}
+                {voice.consent_status === 'attested' && (
+                  <button
+                    className="btn btn-danger"
+                    type="button"
+                    onClick={() => void handleRevokeConsent(voice)}
+                    disabled={busyVoice !== null}
+                  >
+                    {busyVoice === voice.voice_id ? '取消中…' : '利用同意を取り消す'}
+                  </button>
+                )}
+                {voice.consent_status === 'not_required' && (
+                  <span className="voice-consent-note">提供元の免除カテゴリのため、テナント同意は不要です。</span>
+                )}
               </li>
             ))}
           </ul>

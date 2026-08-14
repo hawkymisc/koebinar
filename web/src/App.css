@@ -370,6 +370,13 @@
   font-size: 18px;
 }
 
+.voice-consent-help {
+  max-width: 760px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
 .voice-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -380,11 +387,43 @@
 
 .voice-list li {
   display: grid;
-  gap: 2px;
+  gap: 7px;
   padding: 11px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
+}
+
+.voice-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.voice-consent-status {
+  flex-shrink: 0;
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: right;
+}
+
+.voice-consent-status.status-required {
+  color: #a16207;
+  background: rgb(234 179 8 / 14%);
+}
+
+.voice-consent-status.status-attested,
+.voice-consent-status.status-not_required {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.voice-list .voice-consent-status {
+  overflow: visible;
+  opacity: 1;
 }
 
 .voice-list span,
@@ -393,6 +432,20 @@
   font-size: 11px;
   opacity: 0.65;
   text-overflow: ellipsis;
+}
+
+.voice-list .voice-consent-row {
+  margin-top: 3px;
+  font-size: 11px;
+}
+
+.voice-list .btn {
+  justify-self: start;
+}
+
+.voice-consent-note {
+  font-size: 11px;
+  opacity: 0.68;
 }
 
 .login-page {

@@ -11,6 +11,7 @@ import type {
   Provider,
   SessionResponse,
   VoiceInfo,
+  VoiceListResponse,
   Webinar,
   WebinarCreateInput,
 } from './types'
@@ -46,9 +47,26 @@ export function deleteIntegration(provider: Provider): Promise<{ status: string;
   return apiRequest(`/integrations/${provider}`, { method: 'DELETE' })
 }
 
-export async function listElevenLabsVoices(): Promise<VoiceInfo[]> {
-  const response = await apiRequest<{ voices: VoiceInfo[] }>('/integrations/elevenlabs/voices')
-  return response.voices
+export function listElevenLabsVoices(): Promise<VoiceListResponse> {
+  return apiRequest<VoiceListResponse>('/integrations/elevenlabs/voices')
+}
+
+function voiceConsentPath(voiceId: string): string {
+  return `/integrations/elevenlabs/voices/${encodeURIComponent(voiceId)}/consent`
+}
+
+export function attestElevenLabsVoice(
+  voiceId: string,
+  attestationVersion: string,
+): Promise<VoiceInfo> {
+  return apiRequest<VoiceInfo>(voiceConsentPath(voiceId), {
+    method: 'POST',
+    body: { accepted: true, attestation_version: attestationVersion },
+  })
+}
+
+export function revokeElevenLabsVoiceConsent(voiceId: string): Promise<VoiceInfo> {
+  return apiRequest<VoiceInfo>(voiceConsentPath(voiceId), { method: 'DELETE' })
 }
 
 export function listWebinars(): Promise<Webinar[]> {

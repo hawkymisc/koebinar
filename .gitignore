@@ -25,3 +25,5 @@ remotion/node_modules/
 remotion/dist/
 remotion/out/
 *.props.json
+AGENTS.md
+.codex/

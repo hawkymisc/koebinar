@@ -9,8 +9,10 @@ from fastapi.testclient import TestClient
 
 from koebinar.config import Settings
 from koebinar.main import create_app
+from koebinar.models import VOICE_ATTESTATION_VERSION
 from koebinar.storage import Store
-from tests.mocks.providers import VALID_ORCA_KEY
+from tests.helpers import CLONE_VOICE_ID
+from tests.mocks.providers import VALID_EL_KEY, VALID_ORCA_KEY
 
 
 def _tenant_client(settings: Settings, mock_providers) -> tuple[TestClient, Store]:
@@ -115,10 +117,26 @@ def test_documents_and_webinars_are_isolated_between_tenants(settings, mock_prov
         )
         assert cross_tenant_document.status_code == 404
 
+        # A-005: generation needs a tenant-owned voice with recorded consent.
+        assert client.post(
+            "/api/v1/integrations/elevenlabs",
+            headers=_headers("acme-secret"),
+            json={"api_key": VALID_EL_KEY},
+        ).status_code == 200
+        assert client.get(
+            "/api/v1/integrations/elevenlabs/voices",
+            headers=_headers("acme-secret"),
+        ).status_code == 200
+        assert client.post(
+            f"/api/v1/integrations/elevenlabs/voices/{CLONE_VOICE_ID}/consent",
+            headers=_headers("acme-secret"),
+            json={"accepted": True, "attestation_version": VOICE_ATTESTATION_VERSION},
+        ).status_code == 200
+
         queued = client.post(
             "/api/v1/webinars",
             headers=_headers("acme-secret"),
-            json={"theme": "Tenant job", "auto_run": True},
+            json={"theme": "Tenant job", "voice_id": CLONE_VOICE_ID, "auto_run": True},
         )
         assert queued.status_code == 200
         assert queued.json()["job_id"]

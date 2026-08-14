@@ -9,6 +9,8 @@ import httpx
 from koebinar.config import Settings, get_settings
 from koebinar.crypto import decrypt_secret, encrypt_secret, generate_id, mask_key
 from koebinar.integrations.elevenlabs import ElevenLabsClient, ElevenLabsError
+from koebinar.integrations.errors import IntegrationError
+from koebinar.integrations.voice_consent import VoiceConsentError, VoiceConsentService
 from koebinar.llm.client import LLMError, OrcaRouterClient
 from koebinar.models import (
     IntegrationRegisterRequest,
@@ -16,16 +18,13 @@ from koebinar.models import (
     IntegrationView,
     Provider,
     VoiceInfo,
+    VoiceRef,
     utcnow,
 )
 from koebinar.storage import IntegrationRecord, Store, get_store
 
 
-class IntegrationError(Exception):
-    def __init__(self, message: str, code: str | None = None, status_code: int = 400) -> None:
-        super().__init__(message)
-        self.code = code
-        self.status_code = status_code
+__all__ = ["IntegrationError", "IntegrationsService", "VoiceConsentError", "HttpClientFactory"]
 
 
 HttpClientFactory = Callable[[], httpx.Client]
@@ -43,6 +42,7 @@ class IntegrationsService:
         self.settings = settings or get_settings()
         self.http_client = http_client
         self.tenant_id = tenant_id
+        self.voice_consent = VoiceConsentService(store=self.store, tenant_id=tenant_id)
 
     def _storage_key(self, provider: Provider) -> Provider | str:
         if self.tenant_id == "default":
@@ -96,17 +96,25 @@ class IntegrationsService:
             raise IntegrationError(f"no integration for {provider.value}", code="not_found", status_code=404)
         rec.status = IntegrationStatus.DELETED
         rec.encrypted_api_key = ""
-        # invalidate voice refs for EL (re-assign for durable store write-through)
+        # Integration が消えた以上、その配下の Voice は即時に使用不能にする。
         if provider == Provider.ELEVENLABS:
-            for vid, vr in list(self.store.voice_refs.items()):
-                if vr.get("integration_id") == rec.id:
-                    updated = dict(vr)
-                    updated["active"] = False
-                    self.store.voice_refs[vid] = updated
+            self.voice_consent.deactivate_for_integration(rec.id)
         # keep record for audit but mark deleted
         self.store.integrations[self._storage_key(provider)] = rec
 
+    def active_integration_id(self, provider: Provider = Provider.ELEVENLABS) -> str | None:
+        rec = self._get_record(provider)
+        if rec is None or rec.status != IntegrationStatus.ACTIVE:
+            return None
+        return rec.id
+
     def get_voices(self) -> list[VoiceInfo]:
+        """Read-only: fetch provider metadata and mirror it into voice refs.
+
+        同意状態は一切変更しない。cloned/custom/不明 category は ``required`` の
+        まま返り、明示的な attestation (``attest_voice_consent``) を経ない限り
+        生成には使えない。
+        """
         key = self.resolve_api_key(Provider.ELEVENLABS, require=True)
         client = ElevenLabsClient(
             key,
@@ -121,33 +129,50 @@ class IntegrationsService:
         finally:
             if self.http_client is None:
                 client.close()
-        voices = []
-        for v in data.get("voices", []):
-            voices.append(
+
+        payloads = [v for v in (data.get("voices") or []) if isinstance(v, dict)]
+        integration_id = self.active_integration_id(Provider.ELEVENLABS)
+        if integration_id is None:
+            # System-fallback key: no tenant-owned integration to attach consent to.
+            # Surface metadata without persisting any consent-bearing state.
+            return [
                 VoiceInfo(
                     voice_id=v.get("voice_id") or v.get("id") or "",
                     name=v.get("name") or "unnamed",
-                    category=v.get("category") or "cloned",
+                    category=v.get("category") or "unknown",
                     labels=v.get("labels") or {},
+                    active=False,
+                    usable=False,
                 )
-            )
-            # track voice refs
-            rec = self._get_record(Provider.ELEVENLABS)
-            if rec and rec.status == IntegrationStatus.ACTIVE:
-                voice_key = (
-                    voices[-1].voice_id
-                    if self.tenant_id == "default"
-                    else f"{self.tenant_id}:{voices[-1].voice_id}"
-                )
-                self.store.voice_refs[voice_key] = {
-                    "tenant_id": self.tenant_id,
-                    "integration_id": rec.id,
-                    "provider": Provider.ELEVENLABS.value,
-                    "voice_id": voices[-1].voice_id,
-                    "active": True,
-                    "consent_flag": True,
-                }
-        return voices
+                for v in payloads
+            ]
+        return self.voice_consent.sync(payloads, integration_id=integration_id)
+
+    def list_voice_refs(self) -> list[VoiceRef]:
+        return self.voice_consent.list_refs()
+
+    def attest_voice_consent(
+        self,
+        voice_id: str,
+        *,
+        accepted: bool,
+        attestation_version: str,
+        attested_by: str,
+    ) -> VoiceRef:
+        return self.voice_consent.attest(
+            voice_id,
+            accepted=accepted,
+            attestation_version=attestation_version,
+            attested_by=attested_by,
+            active_integration_id=self.active_integration_id(Provider.ELEVENLABS),
+        )
+
+    def revoke_voice_consent(self, voice_id: str) -> VoiceRef:
+        return self.voice_consent.revoke(voice_id)
+
+    def assert_voice_usable(self, voice_id: str) -> VoiceRef:
+        """Fail-closed gate used by webinar creation, pipeline runs, and TTS."""
+        return self.voice_consent.assert_usable(voice_id)
 
     def resolve_api_key(self, provider: Provider, *, require: bool = False) -> str:
         """Key resolution: ① registered BYOK → ② system fallback if flag allows."""

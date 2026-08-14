@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 from koebinar.config import Settings, get_settings
@@ -94,6 +95,10 @@ class PipelineOrchestrator:
             document_ids=list(req.document_ids),
             status=WebinarStatus.CREATED,
         )
+        # A-005: draft creation is also a use boundary for provider Voices.
+        # This rejects an unconsented clone even when auto_run is false, while
+        # the reserved "default" system-fallback Voice remains compatible.
+        self.integrations.assert_voice_usable(req.voice_id)
         self.store.webinars[wid] = webinar
         if req.auto_run:
             if self._use_sync(req.sync):
@@ -110,6 +115,8 @@ class PipelineOrchestrator:
             except ValueError as exc:
                 raise PipelineError(f"unknown step: {step}", code="invalid_step") from exc
         w = self.get(webinar_id)
+        # A-005: 外部TTSに到達しうる実行はキュー投入前にも同意を検証する。
+        self.integrations.assert_voice_usable(w.voice_id)
         job = self.jobs.enqueue(webinar_id, step, tenant_id=self.tenant_id)
         w.published_at = None
         w.status = WebinarStatus.QUEUED
@@ -131,15 +138,41 @@ class PipelineOrchestrator:
 
     def patch_publication(self, webinar_id: str, req: PublicationPatchRequest) -> Webinar:
         w = self.get(webinar_id)
-        if req.published and w.status != WebinarStatus.COMPLETED:
-            raise PipelineError(
-                "completed webinar required",
-                code="not_completed",
-                status_code=409,
-            )
+        if req.published:
+            if w.status != WebinarStatus.COMPLETED:
+                raise PipelineError(
+                    "completed webinar required",
+                    code="not_completed",
+                    status_code=409,
+                )
+            self._require_publishable_video(w)
         w.published_at = utcnow() if req.published else None
         self.store.webinars[webinar_id] = w
         return w
+
+    def _require_publishable_video(self, w: Webinar) -> None:
+        video = next((a for a in reversed(w.artifacts) if a.type == ArtifactType.VIDEO), None)
+        if video is None:
+            raise PipelineError(
+                "publishable video artifact required",
+                code="video_not_publishable",
+                status_code=409,
+            )
+        meta = video.meta or {}
+        probe = meta.get("probe")
+        if (
+            meta.get("renderer") != "remotion"
+            or meta.get("test_only") is not False
+            or meta.get("publishable") is not True
+            or not isinstance(probe, dict)
+            or probe.get("ok") is not True
+            or not Path(video.storage_uri).is_file()
+        ):
+            raise PipelineError(
+                "video is not publishable: Remotion media probe must pass",
+                code="video_not_publishable",
+                status_code=409,
+            )
 
     def patch_script(self, webinar_id: str, req: ScriptPatchRequest) -> Webinar:
         w = self.get(webinar_id)
@@ -170,6 +203,8 @@ class PipelineOrchestrator:
             raise PipelineError(f"unknown step: {step}", code="invalid_step")
 
         w = self.get(webinar_id)
+        # A-005: 実行開始時に同意を検証する (TTS 直前でも再検証される)。
+        self.integrations.assert_voice_usable(w.voice_id)
         w.published_at = None
         # Re-fetch and persist after each step so API polling sees progress
         w.status = WebinarStatus.RUNNING
@@ -251,7 +286,13 @@ class PipelineOrchestrator:
         elif step == PipelineStep.VIDEO:
             slides = self._load_artifact_json(w, ArtifactType.SLIDES)
             timeline = self._load_artifact_json(w, ArtifactType.TIMELINE)
-            uri, meta = self.renderer.render(w.id, timeline, slides.get("slides") or [])
+            try:
+                uri, meta = self.renderer.render(w.id, timeline, slides.get("slides") or [])
+            except Exception:
+                # Do not leave a previous video artifact looking publishable
+                # after a failed rerender.
+                w.artifacts = [a for a in w.artifacts if a.type != ArtifactType.VIDEO]
+                raise
             self._upsert_artifact(w, step, ArtifactType.VIDEO, uri, None, self.settings.prompt_version, meta=meta)
         else:
             raise PipelineError(f"unhandled step {step}", code="invalid_step")

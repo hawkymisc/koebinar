@@ -199,7 +199,7 @@ def test_pipeline_fails_closed_without_keys(client: TestClient):
         "/api/v1/webinars",
         json={"theme": "No keys", "auto_run": True},
     )
-    assert r.status_code in (401, 400, 500)
+    assert r.status_code in (401, 400, 403, 500)
 
 
 def test_qa_answerable_and_hold(client: TestClient, register_keys):
@@ -255,4 +255,4 @@ def test_delete_key_then_generation_fails(client: TestClient, register_keys):
     register_keys()
     client.delete("/api/v1/integrations/orcarouter")
     r = client.post("/api/v1/webinars", json={"theme": "fail", "auto_run": True})
-    assert r.status_code in (401, 400, 500)
+    assert r.status_code in (401, 400, 403, 500)

@@ -15,6 +15,7 @@ const defaultProps: WebinarProps = {
         duration_frames: 90,
       },
     ],
+    audio_clips: [],
   },
   slides: [{ title: "Koebinar", bullets: ["AI webinar agent"] }],
   fps: 30,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import struct
 import wave
 from io import BytesIO
 from pathlib import Path
@@ -14,6 +13,7 @@ from koebinar.crypto import generate_id
 from koebinar.integrations.elevenlabs import ElevenLabsClient, ElevenLabsError
 from koebinar.integrations.service import IntegrationError, IntegrationsService
 from koebinar.models import Provider
+from koebinar.pipeline.audio_format import AudioFormat, AudioFormatError, load_audio_format, silence_wav
 from koebinar.pipeline.pronunciation import (
     apply_pronunciation,
     estimate_tts_credits,
@@ -47,15 +47,8 @@ def wav_duration_sec(data: bytes) -> float | None:
 
 
 def synthesize_silence_wav(duration_sec: float, sample_rate: int = 22050) -> bytes:
-    """Generate a minimal valid WAV of silence (used by mock path / fallback)."""
-    n_frames = max(1, int(duration_sec * sample_rate))
-    buf = BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(b"\x00\x00" * n_frames)
-    return buf.getvalue()
+    """Generate a valid WAV fixture; provider failures are never replaced by it."""
+    return silence_wav(duration_sec, sample_rate=sample_rate)
 
 
 class TTSAdapter:
@@ -108,7 +101,10 @@ class TTSAdapter:
         voice_id: str,
         lang: str,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """Return (durations list, meta). Fail closed if no key."""
+        """Return (durations list, meta). Fail closed if no key or no consent."""
+        # Re-check at the external side-effect boundary: consent may have been
+        # revoked while an asynchronous job was waiting in the queue.
+        self.integrations.assert_voice_usable(voice_id)
         api_key = self.integrations.resolve_api_key(Provider.ELEVENLABS, require=True)
         client = ElevenLabsClient(
             api_key,
@@ -118,44 +114,37 @@ class TTSAdapter:
         )
         durations: list[dict[str, Any]] = []
         model_id = self.settings.tts_model
+        output_format = self.settings.tts_output_format
         try:
             for slide in tts_script.get("slides") or []:
                 sidx = int(slide.get("slide_index", 0))
                 for j, sentence in enumerate(slide.get("sentences") or []):
-                    key = cache_key(sentence, voice_id, model_id)
+                    key = cache_key(sentence, voice_id, model_id, settings_hash=output_format)
                     if self.integrations.tenant_id != "default":
                         key = f"{self.integrations.tenant_id}:{key}"
-                    cached = self.store.tts_cache.get(key)
-                    if cached:
-                        audio_uri = cached["audio_uri"]
-                        dur = cached["duration_sec"]
+                    entry = self._reuse_cached(key)
+                    if entry is None:
+                        entry = self._synthesize_one(
+                            client,
+                            webinar_id=webinar_id,
+                            voice_id=voice_id,
+                            sentence=sentence,
+                            model_id=model_id,
+                            output_format=output_format,
+                            slide_index=sidx,
+                            sentence_index=j,
+                        )
+                        self.store.tts_cache[key] = entry
+                        cache_hit = False
                     else:
-                        try:
-                            audio = client.text_to_speech(voice_id, sentence, model_id=model_id)
-                        except ElevenLabsError as exc:
-                            if exc.status_code in (401, 403):
-                                self.integrations.mark_invalid(Provider.ELEVENLABS)
-                            raise
-                        if not audio:
-                            audio = synthesize_silence_wav(estimate_duration_sec(sentence, lang))
-                        # If mock returns non-wav, wrap as silence with estimated duration
-                        dur = wav_duration_sec(audio)
-                        if dur is None:
-                            dur = estimate_duration_sec(sentence, lang)
-                            # store raw bytes as "audio" even if not wav
-                        fname = f"audio/s{sidx}_{j}_{generate_id()}.bin"
-                        # ensure parent
-                        (self.store.settings.artifacts_dir / webinar_id / "audio").mkdir(parents=True, exist_ok=True)
-                        audio_uri = self.store.write_bytes(webinar_id, fname, audio)
-                        self.store.tts_cache[key] = {"audio_uri": audio_uri, "duration_sec": dur}
+                        cache_hit = True
                     durations.append(
                         {
                             "slide_index": sidx,
                             "sentence_index": j,
                             "text": sentence,
-                            "duration_sec": dur,
-                            "audio_uri": audio_uri if not cached else cached["audio_uri"],
-                            "cache_hit": bool(cached),
+                            "cache_hit": cache_hit,
+                            **entry,
                         }
                     )
             self.store.add_generation_log(
@@ -165,7 +154,68 @@ class TTSAdapter:
                 cost_hint=str(tts_script.get("total_credits", 0)),
                 tenant_id=self.integrations.tenant_id,
             )
-            return durations, {"model_id": model_id, "voice_id": voice_id}
+            return durations, {
+                "model_id": model_id,
+                "voice_id": voice_id,
+                "output_format": output_format,
+            }
         finally:
             if self.http_client is None:
                 client.close()
+
+    def _artifact_entry(self, audio_uri: str, fmt: AudioFormat) -> dict[str, Any]:
+        root = Path(self.store.settings.artifacts_dir).resolve()
+        path = Path(audio_uri)
+        try:
+            relative = path.resolve().relative_to(root).as_posix()
+        except ValueError as exc:
+            raise AudioFormatError(f"audio artifact is outside artifact root: {path}") from exc
+        return {
+            "audio_uri": str(path),
+            "audio_rel_path": relative,
+            "duration_sec": fmt.duration_sec,
+            "codec": fmt.codec,
+            "content_type": fmt.content_type,
+            "extension": fmt.extension,
+            "sample_rate": fmt.sample_rate,
+            "channels": fmt.channels,
+        }
+
+    def _reuse_cached(self, key: str) -> Optional[dict[str, Any]]:
+        """Reuse cache only after re-reading and decoding the artifact."""
+        cached = self.store.tts_cache.get(key)
+        if not cached or not cached.get("audio_uri"):
+            return None
+        try:
+            fmt = load_audio_format(cached["audio_uri"])
+            return self._artifact_entry(cached["audio_uri"], fmt)
+        except (AudioFormatError, TypeError, ValueError):
+            return None
+
+    def _synthesize_one(
+        self,
+        client: ElevenLabsClient,
+        *,
+        webinar_id: str,
+        voice_id: str,
+        sentence: str,
+        model_id: str,
+        output_format: str,
+        slide_index: int,
+        sentence_index: int,
+    ) -> dict[str, Any]:
+        try:
+            audio = client.synthesize(
+                voice_id,
+                sentence,
+                model_id=model_id,
+                output_format=output_format,
+            )
+        except ElevenLabsError as exc:
+            if exc.status_code in (401, 403):
+                self.integrations.mark_invalid(Provider.ELEVENLABS)
+            raise
+        fmt = audio.audio_format
+        filename = f"audio/s{slide_index}_{sentence_index}_{generate_id()}{fmt.extension}"
+        audio_uri = self.store.write_bytes_atomic(webinar_id, filename, audio.data)
+        return self._artifact_entry(audio_uri, fmt)

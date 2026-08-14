@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from koebinar.config import Settings, reset_settings_cache
 from koebinar.main import create_app
 from koebinar.storage import Store, set_store
+from tests.helpers import CLONE_VOICE_ID, attest_voice
 from tests.mocks.providers import (
     VALID_EL_KEY,
     VALID_ORCA_KEY,
@@ -81,7 +82,9 @@ def auth_headers():
 
 
 @pytest.fixture()
-def register_keys(client: TestClient):
+def register_keys_only(client: TestClient):
+    """Register BYOK keys without recording any voice consent (A-005 default)."""
+
     def _reg():
         r1 = client.post(
             "/api/v1/integrations/orcarouter",
@@ -94,5 +97,21 @@ def register_keys(client: TestClient):
         )
         assert r2.status_code == 200, r2.text
         return r1.json(), r2.json()
+
+    return _reg
+
+
+@pytest.fixture()
+def register_keys(client: TestClient, register_keys_only):
+    """Fully provisioned workspace: BYOK keys plus an attested clone voice.
+
+    Generation paths are fail-closed since A-005, so any test that actually
+    runs the pipeline needs the explicit operator attestation as well.
+    """
+
+    def _reg():
+        result = register_keys_only()
+        attest_voice(client, CLONE_VOICE_ID)
+        return result
 
     return _reg

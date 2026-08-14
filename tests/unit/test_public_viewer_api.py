@@ -3,6 +3,7 @@
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from koebinar.models import (
@@ -21,6 +22,7 @@ from koebinar.models import (
     WebinarStatus,
 )
 from koebinar.storage import Store
+from tests.helpers import seed_attested_voice_ref
 
 
 def _completed_webinar(store: Store, video_path: Path, webinar_id: str = "web_public") -> Webinar:
@@ -45,6 +47,17 @@ def _completed_webinar(store: Store, video_path: Path, webinar_id: str = "web_pu
                 step=PipelineStep.VIDEO,
                 type=ArtifactType.VIDEO,
                 storage_uri=str(video_path),
+                meta={
+                    "renderer": "remotion",
+                    "test_only": False,
+                    "publishable": True,
+                    "probe": {
+                        "ok": True,
+                        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                        "video_streams": 1,
+                        "audio_streams": 1,
+                    },
+                },
             )
         ],
         script={"slides": [{"title": "非公開台本", "narration": "秘密"}]},
@@ -128,6 +141,33 @@ def test_only_completed_webinar_can_be_published(client: TestClient, store: Stor
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "completed webinar required"
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {},
+        {"renderer": "double", "test_only": True, "publishable": False, "probe": {"ok": False}},
+        {"renderer": "remotion", "test_only": False, "publishable": True, "probe": {"ok": False}},
+    ],
+)
+def test_publication_rejects_missing_or_failed_media_contract(
+    client: TestClient, store: Store, settings, meta
+):
+    webinar = _completed_webinar(
+        store,
+        settings.artifacts_dir / f"unpublishable-{len(store.webinars)}.mp4",
+        webinar_id=f"web_unpublishable_{len(store.webinars)}",
+    )
+    webinar.artifacts[0].meta = meta
+    store.webinars[webinar.id] = webinar
+
+    response = client.patch(
+        f"/api/v1/webinars/{webinar.id}/publication",
+        json={"published": True},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "video is not publishable: Remotion media probe must pass"
 
 
 def test_public_question_response_includes_source_titles(
@@ -264,5 +304,6 @@ def test_editing_or_regenerating_requires_republication(
     webinar = store.webinars[webinar.id]
     webinar.published_at = webinar.created_at
     store.webinars[webinar.id] = webinar
+    seed_attested_voice_ref(store, webinar.voice_id)
     queued = client.app.state.koebinar.pipeline.enqueue_from(webinar.id, PipelineStep.VIDEO)
     assert queued.published_at is None

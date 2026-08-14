@@ -7,7 +7,9 @@ artifacts_dir and survive process restarts independently of the API process.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import tempfile
 import threading
 from collections.abc import Iterator, MutableMapping
 from pathlib import Path
@@ -381,9 +383,10 @@ class Store:
     # --- artifacts on disk (object store) ---
 
     def artifact_path(self, webinar_id: str, name: str) -> Path:
-        base = self.settings.artifacts_dir / webinar_id
-        base.mkdir(parents=True, exist_ok=True)
-        return base / name
+        path = self.settings.artifacts_dir / webinar_id / name
+        # Audio artifacts use a nested "audio/" directory.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def write_json(self, webinar_id: str, name: str, data: Any) -> str:
         path = self.artifact_path(webinar_id, name)
@@ -393,6 +396,25 @@ class Store:
     def write_bytes(self, webinar_id: str, name: str, data: bytes) -> str:
         path = self.artifact_path(webinar_id, name)
         path.write_bytes(data)
+        return str(path)
+
+    def write_bytes_atomic(self, webinar_id: str, name: str, data: bytes) -> str:
+        """Write an artifact and publish its final pathname atomically."""
+        path = self.artifact_path(webinar_id, name)
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=str(path.parent),
+        )
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, path)
+        finally:
+            temp_path.unlink(missing_ok=True)
         return str(path)
 
     def read_json(self, uri: str) -> Any:
