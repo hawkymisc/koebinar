@@ -1,14 +1,55 @@
 import { apiRequest, API_BASE, getToken } from './client'
 import type {
   Job,
+  IntegrationView,
   KnowledgeCreateInput,
   KnowledgeDocument,
   PublicWebinar,
   Question,
   ScriptSlide,
+  LoginResponse,
+  Provider,
+  SessionResponse,
+  VoiceInfo,
   Webinar,
   WebinarCreateInput,
 } from './types'
+
+export function login(workspaceId: string, accessToken: string): Promise<LoginResponse> {
+  return apiRequest<LoginResponse>('/auth/login', {
+    method: 'POST',
+    body: { workspace_id: workspaceId, access_token: accessToken },
+    auth: false,
+  })
+}
+
+export function getSession(): Promise<SessionResponse> {
+  return apiRequest<SessionResponse>('/auth/session')
+}
+
+export function listIntegrations(): Promise<IntegrationView[]> {
+  return apiRequest<IntegrationView[]>('/integrations')
+}
+
+export function registerIntegration(
+  provider: Provider,
+  apiKey: string,
+  acceptFreeTier: boolean,
+): Promise<IntegrationView> {
+  return apiRequest<IntegrationView>(`/integrations/${provider}`, {
+    method: 'POST',
+    body: { api_key: apiKey, accept_free_tier: acceptFreeTier },
+  })
+}
+
+export function deleteIntegration(provider: Provider): Promise<{ status: string; provider: Provider }> {
+  return apiRequest(`/integrations/${provider}`, { method: 'DELETE' })
+}
+
+export async function listElevenLabsVoices(): Promise<VoiceInfo[]> {
+  const response = await apiRequest<{ voices: VoiceInfo[] }>('/integrations/elevenlabs/voices')
+  return response.voices
+}
 
 export function listWebinars(): Promise<Webinar[]> {
   return apiRequest<Webinar[]>('/webinars')
@@ -62,12 +103,11 @@ export function createQuestion(webinarId: string, message: string): Promise<Ques
   return apiRequest<Question>('/questions', {
     method: 'POST',
     body: { webinar_id: webinarId, message },
-    auth: false,
   })
 }
 
 export function getQuestion(id: string): Promise<Question> {
-  return apiRequest<Question>(`/questions/${id}`, { auth: false })
+  return apiRequest<Question>(`/questions/${id}`)
 }
 
 export function createPublicQuestion(webinarId: string, message: string): Promise<Question> {

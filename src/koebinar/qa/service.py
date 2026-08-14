@@ -33,21 +33,31 @@ class QAService:
         knowledge: Optional[KnowledgeService] = None,
         integrations: Optional[IntegrationsService] = None,
         http_client=None,
+        tenant_id: str = "default",
     ) -> None:
         self.store = store or get_store()
         self.settings = settings or get_settings()
-        self.knowledge = knowledge or KnowledgeService(store=self.store)
+        self.tenant_id = tenant_id
+        self.knowledge = knowledge or KnowledgeService(store=self.store, tenant_id=tenant_id)
         self.integrations = integrations or IntegrationsService(
-            store=self.store, settings=self.settings, http_client=http_client
+            store=self.store,
+            settings=self.settings,
+            http_client=http_client,
+            tenant_id=tenant_id,
         )
         self.http_client = http_client
 
     def ask(self, req: QuestionCreateRequest) -> Question:
         webinar = self.store.webinars.get(req.webinar_id)
-        if webinar is None:
+        if webinar is None or webinar.tenant_id != self.tenant_id:
             raise ValueError("webinar not found")
         qid = generate_id("q_")
-        question = Question(id=qid, webinar_id=req.webinar_id, message=req.message)
+        question = Question(
+            id=qid,
+            tenant_id=self.tenant_id,
+            webinar_id=req.webinar_id,
+            message=req.message,
+        )
         self.store.questions[qid] = question
         try:
             answer = self._answer(question, webinar)
@@ -61,6 +71,7 @@ class QAService:
             if answer.intent:
                 sig = IntentSignal(
                     id=generate_id("intentsig_"),
+                    tenant_id=self.tenant_id,
                     question_id=qid,
                     type=str(answer.intent.get("type", "general")),
                     value=str(answer.intent.get("value", "")),
@@ -71,6 +82,7 @@ class QAService:
             question.status = QuestionStatus.FAILED
             question.answer = Answer(
                 id=generate_id("ans_"),
+                tenant_id=self.tenant_id,
                 question_id=qid,
                 text=str(exc),
                 confidence=0.0,
@@ -80,11 +92,16 @@ class QAService:
         return question
 
     def get(self, question_id: str) -> Optional[Question]:
-        return self.store.questions.get(question_id)
+        question = self.store.questions.get(question_id)
+        if question is None or question.tenant_id != self.tenant_id:
+            return None
+        return question
 
     def list_for_analytics(self) -> list[dict[str, Any]]:
         rows = []
         for q in self.store.questions.values():
+            if q.tenant_id != self.tenant_id:
+                continue
             rows.append(
                 {
                     "question_id": q.id,
@@ -143,6 +160,7 @@ class QAService:
             )
             return Answer(
                 id=generate_id("ans_"),
+                tenant_id=self.tenant_id,
                 question_id=question.id,
                 text=text,
                 confidence=conf,
@@ -181,6 +199,7 @@ class QAService:
         )
         return Answer(
             id=generate_id("ans_"),
+            tenant_id=self.tenant_id,
             question_id=question.id,
             text=text,
             confidence=conf,
@@ -226,6 +245,7 @@ class QAService:
                 purpose="qa",
                 model_id=self.settings.llm_model,
                 prompt_version=self.settings.prompt_version,
+                tenant_id=self.tenant_id,
             )
             return result
         finally:

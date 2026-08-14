@@ -6,7 +6,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 文書バージョン | v1.6 |
+| 文書バージョン | v1.7 |
 | 作成日 | 2026-08-08 |
 | 対象フェーズ | ハッカソンMVP / Phase 1 |
 | 文書区分 | ハッカソン開発用 |
@@ -25,6 +25,7 @@
 | 1.4 | 2026-08-08 | OrcaRouterもBYOK化し、Integrations APIを`{provider}`共通化。キー解決順序を全プロバイダー共通ルールに統一 | チーム（要記入） |
 | 1.5 | 2026-08-08 | プロダクト名を「Koebinar（コエビナー）」に決定し全文書へ反映 | チーム（要記入） |
 | 1.6 | 2026-08-12 | Web UI資料アップロード仕様（PDF/PPTXをブラウザ内抽出、§2.1）、追加指示`instructions`とKB紐付け厳格化（§3.2）を追加。B-stack（永続SQLite/非同期worker/Remotion経路）とWeb UI実装の反映 | チーム（要記入） |
+| 1.7 | 2026-08-14 | ワークスペース認証、テナント分離、サイドバー、連携設定画面を追加。詳細は `tenant-auth-console.md` | チーム（要記入） |
 
 ## 1. 仕様範囲・設計原則
 
@@ -38,6 +39,7 @@
 - **Resumable pipeline**: 動画生成は段階（Step）単位で中間生成物を保存し、任意ステップから再実行できる（daida-ai流用）。
 - **Single TTS provider**: TTSはElevenLabs（Eleven v3）に一本化する。ただし呼び出しは薄いAdapter interfaceの背後に置き、将来のエンジン追加（Irodori-TTS等）を妨げない。
 - **BYOK first**: 外部プロバイダー（OrcaRouter / ElevenLabs）のAPIキーは運用者の持ち込みキーを第一とし、キーは常にサーバー側でのみ扱う。呼び出し時のキー解決順序は全プロバイダー共通で「①運用者の登録キー → ②システムのフォールバックキー（プロバイダー別構成フラグで有効時のみ）」とする。
+- **Tenant boundary**: Bearer tokenからサーバー側でテナントを解決し、運用者データとBYOKを `tenant_id` で分離する。別テナントのID指定は404として扱う。
 - **Reproducible**: 各生成物にmodel_id / prompt_version / 入力ハッシュを保存する。
 
 ## 2. システム構成
@@ -199,10 +201,12 @@ v1.0の設計を簡素化して踏襲する。
 
 ## 8. API仕様（MVP）
 
-REST/JSON、`/api/v1`。認証はMVPでは簡易トークン。
+REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer token、公開視聴APIは認証不要とする。
 
 | **Method** | **Path** | **用途** |
 |---|---|---|
+| POST | /api/v1/auth/login | ワークスペースID＋アクセストークンの検証（認証不要） |
+| GET | /api/v1/auth/session | 現在の認証テナント取得（Bearer必須） |
 | POST | /api/v1/knowledge/documents | 資料登録（PDF/URL/Text） |
 | POST | /api/v1/webinars | ウェビナー生成ジョブ作成（テーマ、尺、言語、voice、テンプレート） |
 | GET | /api/v1/webinars/{id} | ジョブ状態・中間生成物取得 |
@@ -228,16 +232,16 @@ REST/JSON、`/api/v1`。認証はMVPでは簡易トークン。
 
 | **Entity** | **主要Field** |
 |---|---|
-| knowledge_documents | id, title, source_type, storage_uri, status, metadata（`original_format`/`filename`等、v1.6でクライアント抽出資料のプロブナンスを保持） |
-| chunks | id, document_id, text, embedding_ref, section |
-| webinars | id, theme, audience, duration_min, lang, template, style, voice_ref, status, current_step, **instructions**（v1.6追加、自由記述の追加指示） |
-| pipeline_artifacts | id, webinar_id, step, type(outline/slides/script/tts_script/audio/timeline/video), storage_uri, model_id, prompt_version, created_at |
-| integrations | id, provider(orcarouter/elevenlabs), encrypted_api_key, key_mask, status, validated_at, meta_json（EL: tier/character_count/character_limit等のプロバイダー固有情報） |
+| knowledge_documents | id, **tenant_id**, title, source_type, storage_uri, status, metadata（`original_format`/`filename`等、v1.6でクライアント抽出資料のプロブナンスを保持） |
+| chunks | id, **tenant_id**, document_id, text, embedding_ref, section |
+| webinars | id, **tenant_id**, theme, audience, duration_min, lang, template, style, voice_ref, status, current_step, **instructions**（v1.6追加、自由記述の追加指示） |
+| pipeline_artifacts | id, **tenant_id**, webinar_id, step, type(outline/slides/script/tts_script/audio/timeline/video), storage_uri, model_id, prompt_version, created_at |
+| integrations | id, **tenant_id**, provider(orcarouter/elevenlabs), encrypted_api_key, key_mask, status, validated_at, meta_json（EL: tier/character_count/character_limit等のプロバイダー固有情報） |
 | voice_refs | id, integration_id, provider(elevenlabs), voice_id, ref_audio_uri, consent_flag, is_system_fallback |
-| questions | id, webinar_id, message, status, created_at |
-| answers | id, question_id, text, confidence, answerability, citations_json, model_id, prompt_version |
-| intent_signals | id, question_id, type, value, confidence |
-| generation_logs | id, request_id, purpose, model_id, prompt_version, cost_hint, created_at |
+| questions | id, **tenant_id**, webinar_id, message, status, created_at |
+| answers | id, **tenant_id**, question_id, text, confidence, answerability, citations_json, model_id, prompt_version |
+| intent_signals | id, **tenant_id**, question_id, type, value, confidence |
+| generation_logs | id, **tenant_id**, request_id, purpose, model_id, prompt_version, cost_hint, created_at |
 
 ## 10. エラー/例外処理
 
@@ -292,4 +296,4 @@ v1.0で定義されていた以下の仕様は、Phase 2以降の設計資産と
 | モデレーション | Moderator Console | answers.status設計 |
 | リアルタイムAIアバター | Presenter Adapter (speak/pause/show_slide) | script.json/timeline.jsonの再利用 |
 | 日本語TTS強化 | Irodori-TTS（サーバーレスGPU、絵文字感情制御） | TTS Adapter interface、発音辞書、文単位wav管理 |
-| マルチテナント・RBAC | tenant_id境界、5ロール | 全EntityへのtenantId追加で対応 |
+| テナント内RBAC・SSO | 5ロール、IdP連携 | 実装済みのtenant_id境界と認証主体を拡張 |

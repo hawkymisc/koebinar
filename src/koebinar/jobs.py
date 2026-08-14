@@ -27,6 +27,7 @@ class JobStatus(str, Enum):
 class Job(BaseModel):
     id: str
     webinar_id: str
+    tenant_id: str = "default"
     step: str
     status: JobStatus = JobStatus.PENDING
     error: Optional[str] = None
@@ -41,12 +42,19 @@ class JobQueue:
         self._conn = store._conn
         self._lock = store._lock
 
-    def enqueue(self, webinar_id: str, step: PipelineStep | str) -> Job:
+    def enqueue(
+        self,
+        webinar_id: str,
+        step: PipelineStep | str,
+        *,
+        tenant_id: str = "default",
+    ) -> Job:
         step_s = step.value if isinstance(step, PipelineStep) else str(step)
         now = _utcnow().isoformat()
         job = Job(
             id=generate_id("job_"),
             webinar_id=webinar_id,
+            tenant_id=tenant_id,
             step=step_s,
             status=JobStatus.PENDING,
             created_at=_utcnow(),
@@ -54,9 +62,9 @@ class JobQueue:
         )
         with self._lock:
             self._conn.execute(
-                "INSERT INTO jobs(id, webinar_id, step, status, error, created_at, updated_at, attempts) "
-                "VALUES(?,?,?,?,?,?,?,?)",
-                (job.id, job.webinar_id, job.step, job.status.value, None, now, now, 0),
+                "INSERT INTO jobs(id, webinar_id, tenant_id, step, status, error, created_at, updated_at, attempts) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (job.id, job.webinar_id, job.tenant_id, job.step, job.status.value, None, now, now, 0),
             )
             self._conn.commit()
         return job
@@ -64,7 +72,7 @@ class JobQueue:
     def get(self, job_id: str) -> Optional[Job]:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, webinar_id, step, status, error, created_at, updated_at, attempts "
+                "SELECT id, webinar_id, tenant_id, step, status, error, created_at, updated_at, attempts "
                 "FROM jobs WHERE id=?",
                 (job_id,),
             ).fetchone()
@@ -75,7 +83,7 @@ class JobQueue:
     def list_for_webinar(self, webinar_id: str) -> list[Job]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, webinar_id, step, status, error, created_at, updated_at, attempts "
+                "SELECT id, webinar_id, tenant_id, step, status, error, created_at, updated_at, attempts "
                 "FROM jobs WHERE webinar_id=? ORDER BY created_at",
                 (webinar_id,),
             ).fetchall()
@@ -101,7 +109,7 @@ class JobQueue:
             if cur.rowcount == 0:
                 return None
             row2 = self._conn.execute(
-                "SELECT id, webinar_id, step, status, error, created_at, updated_at, attempts "
+                "SELECT id, webinar_id, tenant_id, step, status, error, created_at, updated_at, attempts "
                 "FROM jobs WHERE id=?",
                 (job_id,),
             ).fetchone()
@@ -142,10 +150,11 @@ class JobQueue:
         return Job(
             id=row[0],
             webinar_id=row[1],
-            step=row[2],
-            status=JobStatus(row[3]),
-            error=row[4],
-            created_at=datetime.fromisoformat(row[5]) if isinstance(row[5], str) else row[5],
-            updated_at=datetime.fromisoformat(row[6]) if isinstance(row[6], str) else row[6],
-            attempts=int(row[7] or 0),
+            tenant_id=row[2] or "default",
+            step=row[3],
+            status=JobStatus(row[4]),
+            error=row[5],
+            created_at=datetime.fromisoformat(row[6]) if isinstance(row[6], str) else row[6],
+            updated_at=datetime.fromisoformat(row[7]) if isinstance(row[7], str) else row[7],
+            attempts=int(row[8] or 0),
         )

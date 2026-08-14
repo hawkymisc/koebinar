@@ -2,6 +2,21 @@ export type Lang = 'ja' | 'en'
 export type Template = 'tech' | 'casual' | 'formal'
 export type Style = 'casual' | 'keynote' | 'formal' | 'humorous'
 export type SourceType = 'pdf' | 'url' | 'text'
+export type Provider = 'orcarouter' | 'elevenlabs'
+
+export interface Tenant {
+  id: string
+  name: string
+}
+
+export interface LoginResponse {
+  tenant: Tenant
+  token: string
+}
+
+export interface SessionResponse {
+  tenant: Tenant
+}
 
 export type WebinarStatus = 'created' | 'queued' | 'running' | 'completed' | 'failed' | 'partial'
 
@@ -38,6 +53,7 @@ export interface PipelineArtifact {
 
 export interface Webinar {
   id: string
+  tenant_id: string
   theme: string
   audience: string
   duration_min: number
@@ -90,6 +106,7 @@ export interface WebinarCreateInput {
 
 export interface KnowledgeDocument {
   id: string
+  tenant_id: string
   title: string
   source_type: SourceType
   storage_uri: string
@@ -108,6 +125,7 @@ export interface KnowledgeCreateInput {
 
 export interface Job {
   id: string
+  tenant_id: string
   webinar_id: string
   step: PipelineStep
   status: string
@@ -115,6 +133,30 @@ export interface Job {
   created_at: string
   updated_at: string
   attempts: number
+}
+
+export interface IntegrationView {
+  id: string
+  provider: Provider
+  key_mask: string
+  status: 'active' | 'invalid' | 'deleted'
+  validated_at: string | null
+  meta: {
+    tier?: string
+    status?: string
+    character_count?: number
+    character_limit?: number
+    model_count?: number
+    warnings?: string[]
+    [key: string]: unknown
+  }
+}
+
+export interface VoiceInfo {
+  voice_id: string
+  name: string
+  category: string
+  labels: Record<string, string>
 }
 
 export interface Citation {

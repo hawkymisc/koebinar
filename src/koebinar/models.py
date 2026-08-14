@@ -120,6 +120,7 @@ class KnowledgeCreateRequest(BaseModel):
 
 class KnowledgeDocument(BaseModel):
     id: str
+    tenant_id: str = "default"
     title: str
     source_type: SourceType
     storage_uri: str
@@ -131,6 +132,7 @@ class KnowledgeDocument(BaseModel):
 
 class Chunk(BaseModel):
     id: str
+    tenant_id: str = "default"
     document_id: str
     text: str
     section: str = ""
@@ -154,6 +156,7 @@ class WebinarCreateRequest(BaseModel):
 
 class PipelineArtifact(BaseModel):
     id: str
+    tenant_id: str = "default"
     webinar_id: str
     step: PipelineStep
     type: ArtifactType
@@ -167,6 +170,7 @@ class PipelineArtifact(BaseModel):
 
 class Webinar(BaseModel):
     id: str
+    tenant_id: str = "default"
     theme: str
     audience: str
     duration_min: int
@@ -208,6 +212,25 @@ class IntegrationView(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
+class LoginRequest(BaseModel):
+    workspace_id: str = Field(min_length=1, max_length=64)
+    access_token: str = Field(min_length=1, max_length=512)
+
+
+class TenantView(BaseModel):
+    id: str
+    name: str
+
+
+class LoginResponse(BaseModel):
+    tenant: TenantView
+    token: str
+
+
+class SessionResponse(BaseModel):
+    tenant: TenantView
+
+
 class VoiceInfo(BaseModel):
     voice_id: str
     name: str
@@ -232,6 +255,7 @@ class Citation(BaseModel):
 
 class Answer(BaseModel):
     id: str
+    tenant_id: str = "default"
     question_id: str
     text: str
     confidence: float
@@ -244,6 +268,7 @@ class Answer(BaseModel):
 
 class Question(BaseModel):
     id: str
+    tenant_id: str = "default"
     webinar_id: str
     message: str
     status: QuestionStatus = QuestionStatus.PENDING
@@ -253,6 +278,7 @@ class Question(BaseModel):
 
 class GenerationLog(BaseModel):
     id: str
+    tenant_id: str = "default"
     request_id: str
     purpose: str
     model_id: str
@@ -263,6 +289,7 @@ class GenerationLog(BaseModel):
 
 class IntentSignal(BaseModel):
     id: str
+    tenant_id: str = "default"
     question_id: str
     type: str
     value: str

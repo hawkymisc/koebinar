@@ -185,6 +185,7 @@ class GenerationSteps:
                 purpose=purpose,
                 model_id=self.settings.llm_model,
                 prompt_version=self.settings.prompt_version,
+                tenant_id=self.integrations.tenant_id,
             )
             return result
         finally:

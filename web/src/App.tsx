@@ -1,40 +1,19 @@
-import { useState } from 'react'
-import { Link, Outlet, Route, Routes } from 'react-router-dom'
+import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import './App.css'
-import { getToken, setToken } from './api/client'
+import { AuthProvider, useAuth } from './auth/AuthContext'
+import { Sidebar } from './components/Sidebar'
+import { IntegrationSettingsPage } from './pages/IntegrationSettingsPage'
+import { LoginPage } from './pages/LoginPage'
 import { WebinarDetailPage } from './pages/WebinarDetailPage'
 import { WebinarListPage } from './pages/WebinarListPage'
 import { ViewerPage } from './pages/ViewerPage'
 
-function TokenField() {
-  const [value, setValue] = useState(getToken())
-
-  return (
-    <label className="token-field">
-      APIトークン
-      <input
-        type="password"
-        autoComplete="off"
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value)
-          setToken(e.target.value)
-        }}
-      />
-    </label>
-  )
-}
-
 function AdminLayout() {
+  const { tenant, signOut } = useAuth()
+  if (!tenant) return <Navigate to="/login" replace />
   return (
-    <div className="layout">
-      <header className="header">
-        <Link className="brand" to="/">
-          <h1>Koebinar</h1>
-          <span className="tagline">あなたの声が、あなたの代わりに登壇する。</span>
-        </Link>
-        <TokenField />
-      </header>
+    <div className="admin-shell">
+      <Sidebar tenant={tenant} onLogout={signOut} />
       <main className="main">
         <Outlet />
       </main>
@@ -42,15 +21,27 @@ function AdminLayout() {
   )
 }
 
+function RequireAuth() {
+  const { tenant, checking } = useAuth()
+  if (checking) return <div className="session-loading">セッションを確認中…</div>
+  return tenant ? <Outlet /> : <Navigate to="/login" replace />
+}
+
 function App() {
   return (
-    <Routes>
-      <Route path="/watch/:id" element={<ViewerPage />} />
-      <Route element={<AdminLayout />}>
-        <Route path="/" element={<WebinarListPage />} />
-        <Route path="/webinars/:id" element={<WebinarDetailPage />} />
-      </Route>
-    </Routes>
+    <AuthProvider>
+      <Routes>
+        <Route path="/watch/:id" element={<ViewerPage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route element={<RequireAuth />}>
+          <Route element={<AdminLayout />}>
+            <Route path="/" element={<WebinarListPage />} />
+            <Route path="/webinars/:id" element={<WebinarDetailPage />} />
+            <Route path="/settings/integrations" element={<IntegrationSettingsPage />} />
+          </Route>
+        </Route>
+      </Routes>
+    </AuthProvider>
   )
 }
 

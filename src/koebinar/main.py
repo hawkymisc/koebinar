@@ -38,9 +38,9 @@ def create_app(
             client.close()
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
-    # MVP: single-tenant local tool, auth is via Bearer token (no cookies), so a
-    # permissive CORS policy lets the web UI dev server call the API without
-    # exposing session credentials.
+    # Authentication uses an explicit Bearer token (no cookies), so a permissive
+    # CORS policy lets the separately hosted web UI call the API without exposing
+    # ambient browser credentials.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

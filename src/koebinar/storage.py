@@ -40,10 +40,12 @@ class IntegrationRecord:
         encrypted_api_key: str,
         key_mask: str,
         status: IntegrationStatus,
+        tenant_id: str = "default",
         validated_at: Any = None,
         meta: Optional[dict[str, Any]] = None,
     ) -> None:
         self.id = id
+        self.tenant_id = tenant_id
         self.provider = provider
         self.encrypted_api_key = encrypted_api_key
         self.key_mask = key_mask
@@ -54,6 +56,7 @@ class IntegrationRecord:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "tenant_id": self.tenant_id,
             "provider": self.provider.value if isinstance(self.provider, Provider) else self.provider,
             "encrypted_api_key": self.encrypted_api_key,
             "key_mask": self.key_mask,
@@ -74,6 +77,7 @@ class IntegrationRecord:
                 pass
         return cls(
             id=data["id"],
+            tenant_id=data.get("tenant_id") or "default",
             provider=Provider(data["provider"]),
             encrypted_api_key=data.get("encrypted_api_key") or "",
             key_mask=data.get("key_mask") or "",
@@ -315,6 +319,7 @@ class Store:
                 CREATE TABLE IF NOT EXISTS jobs (
                   id TEXT PRIMARY KEY,
                   webinar_id TEXT NOT NULL,
+                  tenant_id TEXT NOT NULL DEFAULT 'default',
                   step TEXT NOT NULL,
                   status TEXT NOT NULL,
                   error TEXT,
@@ -325,6 +330,13 @@ class Store:
                 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
                 """
             )
+            columns = {
+                row[1] for row in self._conn.execute("PRAGMA table_info(jobs)").fetchall()
+            }
+            if "tenant_id" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE jobs ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'"
+                )
             self._conn.commit()
 
     def _load_list(self, kind: str, cls: type) -> list:
@@ -387,10 +399,16 @@ class Store:
         return json.loads(Path(uri).read_text(encoding="utf-8"))
 
     def add_generation_log(
-        self, purpose: str, model_id: str, prompt_version: str, cost_hint: str | None = None
+        self,
+        purpose: str,
+        model_id: str,
+        prompt_version: str,
+        cost_hint: str | None = None,
+        tenant_id: str = "default",
     ) -> GenerationLog:
         log = GenerationLog(
             id=generate_id("log_"),
+            tenant_id=tenant_id,
             request_id=generate_id("req_"),
             purpose=purpose,
             model_id=model_id,

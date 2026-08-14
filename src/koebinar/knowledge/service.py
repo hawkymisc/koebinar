@@ -25,8 +25,9 @@ from koebinar.storage import Store, get_store
 
 
 class KnowledgeService:
-    def __init__(self, store: Optional[Store] = None) -> None:
+    def __init__(self, store: Optional[Store] = None, *, tenant_id: str = "default") -> None:
         self.store = store or get_store()
+        self.tenant_id = tenant_id
 
     def register(self, req: KnowledgeCreateRequest) -> KnowledgeDocument:
         doc_id = generate_id("doc_")
@@ -35,6 +36,7 @@ class KnowledgeService:
         chunks = self._build_chunks(doc_id, text)
         doc = KnowledgeDocument(
             id=doc_id,
+            tenant_id=self.tenant_id,
             title=req.title,
             source_type=req.source_type,
             storage_uri=storage_uri,
@@ -47,16 +49,19 @@ class KnowledgeService:
         return doc
 
     def get(self, document_id: str) -> Optional[KnowledgeDocument]:
-        return self.store.documents.get(document_id)
+        document = self.store.documents.get(document_id)
+        if document is None or document.tenant_id != self.tenant_id:
+            return None
+        return document
 
     def list_documents(self) -> list[KnowledgeDocument]:
-        return list(self.store.documents.values())
+        return [document for document in self.store.documents.values() if document.tenant_id == self.tenant_id]
 
     def get_chunks(self, document_ids: Optional[list[str]] = None) -> list[Chunk]:
         if document_ids is None:
-            ids = list(self.store.chunks.keys())
+            ids = [document.id for document in self.list_documents()]
         else:
-            ids = document_ids
+            ids = [document_id for document_id in document_ids if self.get(document_id) is not None]
         out: list[Chunk] = []
         for did in ids:
             out.extend(self.store.chunks.get(did, []))
@@ -82,7 +87,10 @@ class KnowledgeService:
         return normalize_whitespace(req.content)
 
     def _persist_source(self, doc_id: str, req: KnowledgeCreateRequest, text: str) -> str:
-        base = self.store.settings.data_dir / "knowledge" / doc_id
+        if self.tenant_id == "default":
+            base = self.store.settings.data_dir / "knowledge" / doc_id
+        else:
+            base = self.store.settings.data_dir / "tenants" / self.tenant_id / "knowledge" / doc_id
         base.mkdir(parents=True, exist_ok=True)
         path = base / "source.txt"
         path.write_text(text, encoding="utf-8")
@@ -104,6 +112,7 @@ class KnowledgeService:
             chunks.append(
                 Chunk(
                     id=generate_id("chk_"),
+                    tenant_id=self.tenant_id,
                     document_id=doc_id,
                     text=piece,
                     section=estimate_section(i, total),

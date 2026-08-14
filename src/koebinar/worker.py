@@ -39,7 +39,12 @@ def process_one(
     if job is None:
         return False
     logger.info("claimed job %s webinar=%s step=%s", job.id, job.webinar_id, job.step)
-    orch = PipelineOrchestrator(store=store, settings=settings, http_client=http_client)
+    orch = PipelineOrchestrator(
+        store=store,
+        settings=settings,
+        http_client=http_client,
+        tenant_id=job.tenant_id,
+    )
     try:
         orch.run_from(job.webinar_id, job.step)
         queue.complete(job.id)
