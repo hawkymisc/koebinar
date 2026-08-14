@@ -6,7 +6,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 文書バージョン | v1.7 |
+| 文書バージョン | v1.8 |
 | 作成日 | 2026-08-08 |
 | 対象フェーズ | ハッカソンMVP / Phase 1 |
 | 文書区分 | ハッカソン開発用 |
@@ -26,10 +26,11 @@
 | 1.5 | 2026-08-08 | プロダクト名を「Koebinar（コエビナー）」に決定し全文書へ反映 | チーム（要記入） |
 | 1.6 | 2026-08-12 | Web UI資料アップロード仕様（PDF/PPTXをブラウザ内抽出、§2.1）、追加指示`instructions`とKB紐付け厳格化（§3.2）を追加。B-stack（永続SQLite/非同期worker/Remotion経路）とWeb UI実装の反映 | チーム（要記入） |
 | 1.7 | 2026-08-14 | ワークスペース認証、テナント分離、サイドバー、連携設定画面を追加。詳細は `tenant-auth-console.md` | チーム（要記入） |
+| 1.8 | 2026-08-14 | 現行実装との整合性監査に基づき、非同期Worker構成、Step 2への追加指示の伝播、URL資料の扱いを明確化。PR #10の音声メディア・公開可否・Voice同意契約を反映し、未解消差分は `audit_report.md` に集約 | Codex |
 
 ## 1. 仕様範囲・設計原則
 
-本書は要件定義書v1.1のMust/Should要件を実装可能な粒度へ落とし込む。
+本書は要件定義書v1.8のMust/Should要件を実装可能な粒度へ落とし込む。実装済みであることを示す文書ではなく、現行コード・テストとの差分は `audit_report.md` を正とする。
 
 ### 1.1 設計原則
 
@@ -48,15 +49,18 @@
 flowchart LR
     Operator["運用者<br/>Web UI"] --> API["API / Pipeline Orchestrator"]
     Viewer["視聴者<br/>Player + Q&A Widget"] --> API
+    API --> JOBS["SQLite Job Queue"]
+    WORKER["Pipeline Worker"] --> JOBS
     API --> KB["Knowledge Service<br/>ingest / chunk / index"]
-    API --> GEN["Generation Pipeline<br/>outline→slides→script"]
+    WORKER --> GEN["Generation Pipeline<br/>outline→slides→script"]
     GEN --> ORCA["OrcaRouter<br/>OpenAI互換 Gateway"]
     API --> QA["Q&A Service (RAG)"]
     QA --> ORCA
-    GEN --> TTS["TTS Adapter"]
+    WORKER --> TTS["TTS Adapter"]
     TTS --> EL["ElevenLabs Eleven v3<br/>(JA/EN voice clone)"]
-    GEN --> REM["Remotion Renderer<br/>MP4出力"]
+    WORKER --> REM["Remotion Renderer<br/>MP4出力"]
     API --> STORE["Storage<br/>資料/音声/動画/中間生成物"]
+    WORKER --> STORE
 ```
 
 *図1. ハッカソンMVP論理アーキテクチャ*
@@ -71,7 +75,7 @@ flowchart LR
 | PDF | `pdf.js`（ブラウザ内）でページ単位にテキスト抽出 | スキャン画像PDF（テキスト層なし）はOCR非対応で不可。ページ間は空行区切りで結合し、チャンク分割の境界に利用する |
 | PPTX | `JSZip` + `DOMParser`（ブラウザ内、いずれも追加の重量級依存なし）で `ppt/slides/slideN.xml` の `<a:t>` を抽出。スライド順は `presentation.xml` に従う | スピーカーノート（`ppt/notesSlides/`）も抽出し本文に含める |
 
-抽出結果は `POST /api/v1/knowledge/documents` に `source_type="text"` として送信し、`metadata` に `{original_format, filename}` を保存する（プロブナンス目的、既存スキーマ変更なし）。既存の `source_type=pdf/url` の擬似パーサ（`extract_text_from_pdf_payload` 等）はAPI直接呼び出し用として温存するが、Web UIはこの経路を使わない。
+抽出結果は `POST /api/v1/knowledge/documents` に `source_type="text"` として送信し、`metadata` に `{original_format, filename}` を保存する（プロブナンス目的、既存スキーマ変更なし）。API契約でも `source_type="text"` のみを受理する。現実装が受理する旧 `pdf/url` 擬似入力は監査A-013の解消対象とする。
 
 アップロード制限: ファイルサイズ上限・PPTX展開後サイズ上限をクライアント側でチェックし、超過時は拒否する（zip bomb対策）。
 
@@ -80,13 +84,14 @@ URL資料の取り込みはMVPスコープ外（requirements.md OD-10、SSRFリ�
 | **コンポーネント** | **責務** |
 |---|---|
 | Web App | 運用者UI（資料登録、台本編集、生成実行、プレビュー）、視聴者プレイヤー + Q&A Widget |
-| Pipeline Orchestrator | Step状態管理、再実行、ジョブキュー |
-| Knowledge Service | PDF/URL/Text取り込み、chunking、embedding、検索 |
+| Pipeline Orchestrator | Step状態管理、再実行要求、ジョブ投入。同期モードではAPIプロセス内実行 |
+| Pipeline Worker | SQLiteジョブをclaimし、対象テナントの生成パイプラインを実行 |
+| Knowledge Service | 抽出済みText登録、chunking、embedding、検索（現実装差分は監査A-012） |
 | Generation Pipeline | アウトライン→スライド→台本の生成（OrcaRouter経由） |
 | TTS Adapter | ElevenLabs API呼び出し、発音辞書適用、文単位合成、生成キャッシュ、クレジット消費の記録 |
 | Remotion Renderer | スライドcomponent + 音声のタイムライン合成、MP4レンダリング |
 | Q&A Service | RAG検索、回答生成、confidence判定、保留 |
-| Storage | 資料原本、chunk、音声wav、MP4、中間JSON |
+| Storage | 抽出済み資料テキスト、chunk、音声、MP4、中間JSON |
 
 ## 3. 動画生成パイプライン仕様（中核）
 
@@ -98,7 +103,7 @@ daida-aiの6ステップ構成を流用し、Step 5-6をRemotionレンダリン�
 | 2 | スライド生成 | outline.json、テンプレート指定 | slides.json（Remotion component props）＋必要に応じ画像 |
 | 3 | 台本生成 | slides.json、話法スタイル、KB根拠 | script.json（スライド別ナレーション文、参照文書ID） |
 | 4a | TTSスクリプト整形 | script.json、発音辞書 | tts_script.json（文単位分割、読み補正適用済み） |
-| 4b | 音声合成 | tts_script.json、voice_id、v3スタイル設定 | audio/*.wav ＋ durations.json（ElevenLabs、キャッシュ利用） |
+| 4b | 音声合成 | tts_script.json、voice_id、v3スタイル設定 | audio/*（レスポンス実形式に応じたMP3/WAV）＋durations.json（ElevenLabs、キャッシュ利用） |
 | 5 | タイムライン構築 | slides.json + durations.json | timeline.json（スライド表示区間と音声の対応） |
 | 6 | レンダリング | timeline.json、audio、slides | webinar.mp4 |
 
@@ -118,7 +123,7 @@ daida-aiの6ステップ構成を流用し、Step 5-6をRemotionレンダリン�
 
 ### 3.2 追加指示・資料の紐付け（v1.6）
 
-- **`Webinar.instructions`（任意, string）**: 作成時に運用者が自由記述で入力する追加指示・重視点。`Step 1（アウトライン生成）` と `Step 3（台本生成）` の両方でLLMへの入力に含める（`operator_instructions` フィールドとして、`<kb>` の未信頼データとは明確に区別する）。スライド生成（Step 2）はアウトラインからの機械的な変換のみのため対象外。ステップ単体再実行時も同じ`instructions`値を再利用する（Webinarレコードに永続化するため）。
+- **`Webinar.instructions`（任意, string）**: 作成時に運用者が自由記述で入力する追加指示・重視点。`Step 1（アウトライン生成）` と `Step 3（台本生成）` の両方でLLMへの入力に含める（`operator_instructions` フィールドとして、`<kb>` の未信頼データとは明確に区別する）。Step 2もOrcaRouterを使うが、Step 1で追加指示を反映済みの`outline.json`を入力とし、`instructions`自体は重複送信しない。ステップ単体再実行時も同じ`instructions`値を再利用する（Webinarレコードに永続化するため）。
 - **資料の紐付け厳格化**: `document_ids` は運用者が明示的に選択したものだけを対象とする。従来「未指定＝登録済み全資料を検索対象にする」実装だったが、複数ウェビナーを作るたびに資料が混ざる問題があるため撤廃する。`document_ids=[]`（0件選択）はKB根拠なしでの生成を意味し、台本の各スライドは`grounded=false`として扱われる（Step 3の既存フォールバック挙動をそのまま利用）。
 
 ## 4. OrcaRouter統合仕様
@@ -159,17 +164,19 @@ MVPの実装はElevenLabsのみだが、interfaceは維持し将来のエンジ�
   1. `GET /v1/user/subscription` をそのキーで呼び出し、有効性・tier・status・文字数残量（character_count / character_limit）・ボイススロットを取得
   2. `GET /v1/voices` の呼び出し可否でVoices読み取りスコープを確認
   3. TTSエンドポイントのスコープは短文の試し生成（数文字）または初回生成時に確認し、403時は必要スコープの設定手順を案内
-- **プラン警告**: tierがFreeの場合「商用利用不可・生成物の公開にはクレジット表記が必要」の警告を表示し、確認の上でのみ登録を許可する。
+- **プラン警告**: providerから取得したtierを表示し、公開・商用利用・クレジット表記等の条件は利用時点の契約と規約を確認するよう案内する。警告対象の登録は確認の上でのみ許可する。
 - **保存**: キーはアプリ層で暗号化（マスターキーは環境変数管理）してDB保存。復号はTTS呼び出し直前のサーバー側処理のみ。APIレスポンス・UI・ログには`sk_...`末尾4桁のマスクのみ。
-- **Voice選択**: 登録キーで`GET /v1/voices`を呼び、Voice一覧（クローンVoice含む）を返す。運用者は動画生成に使うvoice_idを選択する。voice_refsは integration_id に紐づける。
-- **削除/差替え**: キー削除時は該当integrationのvoice_refsを無効化する。生成済み音声・動画は保持する（再生成には再登録が必要）。
+- **Voice同期・選択**: 登録キーで`GET /v1/voices`を呼び、Voice一覧（クローンVoice含む）をテナントスコープで同期する。一覧取得は同意を付与しない。運用者が動画生成に使うvoice_idを選択し、APIは現在テナントの有効かつ利用可能なVoiceかを検証する（作成UIの未実装差分は監査A-004）。
+- **削除/差替え**: キー削除時は該当integrationのvoice_refsを無効化する。キー差替え後に同一テナント・同一provider Voice IDが再同期された場合は、同意対象が変わらないため有効な証跡を維持し、新しいintegrationへ関連付ける。生成済み音声・動画は保持する。
 - **フォールバック**: BYOK未登録の場合、構成フラグ `ALLOW_SYSTEM_TTS_KEY=true` のときのみシステムキーで生成可能（デモ・開発用。生成物に「デモ用共有アカウント」フラグを付与）。OrcaRouter側は `ALLOW_SYSTEM_LLM_KEY` で同様に制御する。
 - **推奨案内**: 登録画面に「スコープをText to Speech＋Voices読み取りに制限し、クレジット上限・有効期限を設定した専用キーの発行を推奨」と表示する。
 
 ### 5.3 制約・運用
 
-- クローン用参照音声は本人同意済みのもののみ登録可能とし、登録時に同意フラグを必須にする。ElevenLabsの利用規約・商用条件（Starter以上）に従う。
-- 文ごとのwavとdurationを保存し、リテイク時は該当wavのみ差し替え、Step 5以降を再実行する。
+- providerに登録済みのクローン/custom/未知カテゴリVoiceは、運用者が話者本人の同意取得と利用条件を確認し、Voiceごとに明示attestationを記録するまで使用不可とする。既知のpremade Voiceだけを`not_required`とし、旧`consent_flag=true`や証跡sourceのないデータは同意として扱わない。
+- 証跡は`tenant_id`、`voice_id`、`consent_source=operator_attestation`、`attested_at`、`attested_by`、`attestation_version`を保持する。ウェビナー作成、ジョブ実行、TTS外部呼び出し直前で所属・active・証跡をfail-closedに検証する。
+- 同意取消は証跡を無効化して以後の生成を拒否するが、既存ジョブの取消操作とは独立に扱う。生成済み音声・動画は削除しない。
+- 音声はレスポンスbytesの実形式を検査し、MP3/WAVの正しい拡張子・MIME・durationで文ごとに保存する。リテイク時は該当音声のみ差し替え、Step 5以降を再実行する。
 - ElevenLabs障害・クレジット枯渇時のデモ保険として、edge-tts等へのフォールバックを構成フラグで切替可能にする（品質低下許容、クローン声は失われる）。
 - 日本語TTSの表現力強化（絵文字感情制御等）が必要になった場合は、Phase 2でIrodori-TTSのサーバーレスGPUホスティングを再評価する（本Adapter interfaceへの追加実装で対応可能）。
 
@@ -179,6 +186,8 @@ MVPの実装はElevenLabsのみだが、interfaceは維持し将来のエンジ�
 - テーマ: tech（ダーク/シアン）、casual（暖色/丸み）、formal（白基調）。フォントはNoto Sans CJK JP / Noto Serif CJK JP。
 - タイムライン: `durations.json`から各スライドのdurationInFramesを算出（30fps）。音声は`<Audio>`でスライド区間に配置。
 - 出力: 1080p / 30fps / H.264 MP4。ローカル`@remotion/renderer`でレンダリング。尺・解像度は構成値。
+- 成果物確定: 一時ファイルへレンダリングし、`ffprobe`で映像・音声ストリームと構成尺を検査してから原子的に`webinar.mp4`へ確定する。Remotionまたはprobe失敗はStep失敗とし、テストダブルへ自動フォールバックしない。
+- 公開条件: `renderer=remotion`、`test_only=false`、`publishable=true`、probe成功、成果物実在をすべて満たす場合だけ公開可能とする。
 - 字幕（Could）: script.jsonから字幕トラックを焼き込みまたはVTT出力。
 
 ## 7. Q&A（RAG）仕様
@@ -207,7 +216,7 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 |---|---|---|
 | POST | /api/v1/auth/login | ワークスペースID＋アクセストークンの検証（認証不要） |
 | GET | /api/v1/auth/session | 現在の認証テナント取得（Bearer必須） |
-| POST | /api/v1/knowledge/documents | 資料登録（PDF/URL/Text） |
+| POST | /api/v1/knowledge/documents | 抽出済みテキスト資料の登録。Web UIはPDF/PPTX/Textを`source_type=text`で送る。URLは受理しない（現実装差分は監査A-013） |
 | POST | /api/v1/webinars | ウェビナー生成ジョブ作成（テーマ、尺、言語、voice、テンプレート） |
 | GET | /api/v1/webinars/{id} | ジョブ状態・中間生成物取得 |
 | PATCH | /api/v1/webinars/{id}/script | 台本修正 |
@@ -222,6 +231,8 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 | GET | /api/v1/integrations | 全プロバイダーの接続状態取得（キーはマスク表示、検証日時、ELはtier・残量含む） |
 | DELETE | /api/v1/integrations/{provider} | キー削除（ELは関連voice_refs無効化） |
 | GET | /api/v1/integrations/elevenlabs/voices | ElevenLabs登録キーのアカウントのVoice一覧取得 |
+| POST | /api/v1/integrations/elevenlabs/voices/{voice_id}/consent | クローン/custom Voiceの明示的な利用同意証跡を記録 |
+| DELETE | /api/v1/integrations/elevenlabs/voices/{voice_id}/consent | Voiceの利用同意証跡を取り消し、以後の生成を拒否 |
 | POST | /api/v1/questions | 運用者用の質問作成（簡易トークン必須） |
 | GET | /api/v1/questions/{id} | 運用者用の回答取得（簡易トークン必須） |
 | GET | /api/v1/analytics/questions | 質問・Intent一覧、CSV/JSONエクスポート |
@@ -237,7 +248,7 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 | webinars | id, **tenant_id**, theme, audience, duration_min, lang, template, style, voice_ref, status, current_step, **instructions**（v1.6追加、自由記述の追加指示） |
 | pipeline_artifacts | id, **tenant_id**, webinar_id, step, type(outline/slides/script/tts_script/audio/timeline/video), storage_uri, model_id, prompt_version, created_at |
 | integrations | id, **tenant_id**, provider(orcarouter/elevenlabs), encrypted_api_key, key_mask, status, validated_at, meta_json（EL: tier/character_count/character_limit等のプロバイダー固有情報） |
-| voice_refs | id, integration_id, provider(elevenlabs), voice_id, ref_audio_uri, consent_flag, is_system_fallback |
+| voice_refs | tenant_id, integration_id, provider(elevenlabs), voice_id, category, active, consent_status, consent_source, attested_at, attested_by, attestation_version, revoked_at, synced_at |
 | questions | id, **tenant_id**, webinar_id, message, status, created_at |
 | answers | id, **tenant_id**, question_id, text, confidence, answerability, citations_json, model_id, prompt_version |
 | intent_signals | id, **tenant_id**, question_id, type, value, confidence |
@@ -253,6 +264,7 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 | 持ち込みキーのスコープ不足・権限エラー（403） | 生成停止 | 必要権限の設定手順を案内（EL: TTS/Voices読み取り） |
 | 持ち込みOrcaRouterキーの残高不足 | 生成失敗として停止 | 残高確認・チャージを案内。デモ時はフォールバックキーで継続 |
 | ElevenLabsクレジット枯渇 | キャッシュ利用、未生成分は保留。フォールバックTTSを提案 | 運用者に通知 |
+| Voice未同期・無効・同意未記録/取消済み | ウェビナー作成、ジョブ実行、TTS呼び出しを拒否 | Voice同期と明示同意を案内 |
 | Remotionレンダリング失敗 | ログ保存、timeline.jsonから再実行 | 中間生成物は保持 |
 | Retrieval hitなし（Q&A） | 回答せず保留文 | 「担当者が確認します」 |
 | 台本のKB根拠なしスライド | 警告フラグ付与 | 台本編集画面で強調表示 |
@@ -264,7 +276,7 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 - 公開Q&AはクライアントIP＋ウェビナー単位で回数制限する。単一プロセスMVPのインメモリ制限であり、水平分散時は共有ストア型limiterへ置き換える。
 - 公開Q&AのIPはASGIサーバーが確定した `request.client` を使う。リバースプロキシ配下ではUvicornの `--forwarded-allow-ips` を実際のプロキシIPだけに設定する。未設定の共有プロキシ配下では全視聴者が同一IP扱いになるため、直公開または信頼済みプロキシ設定をMVPの前提とする。
 - 持ち込みキー（OrcaRouter / ElevenLabs）はいずれもアプリ層暗号化でDB保存。平文ログ・フロント返却を禁止し、マスク表示（末尾4桁）のみ。外部API呼び出しは必ずバックエンドから行い、キーをブラウザへ渡さない。
-- 参照音声のアップロードは同意フラグ必須。生成動画にAI生成表記を焼き込む。
+- クローン/custom Voiceは一覧取得と同意付与を分離し、テナントスコープの明示証跡がない限りfail-closedにする。取消後は以後の生成を拒否する。生成動画にAI生成表記を焼き込む。
 - KB由来テキストはuntrusted dataとしてプロンプト内で明示的に区切る。OrcaRouterのガードレールを併用する。
 - デモ用資料にPII・機微情報を含めない運用ルール。
 
@@ -272,8 +284,8 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 
 | **テスト種別** | **対象** | **主要判定** |
 |---|---|---|
-| Unit | TTS Adapterルーティング、タイムライン計算、発音辞書適用 | 決定論的ロジックをカバー |
-| Integration | OrcaRouter呼び出し（BYOK検証含む）、ElevenLabs API（BYOK検証含む）、Remotionレンダリング | 正常系＋timeout/クレジット超過/残高不足/429/401/403（無効キー・スコープ不足） |
+| Unit | TTS Adapter、音声形式、タイムライン計算、発音辞書、Voice同意状態 | 決定論的ロジックとfail-closed境界をカバー |
+| Integration | OrcaRouter呼び出し（BYOK検証含む）、ElevenLabs API（BYOK・Voice同意検証含む）、Remotionレンダリング | 正常系＋timeout/クレジット超過/残高不足/429/401/403、音声・映像probe、公開拒否 |
 | E2E | 資料→MP4の全パイプライン | JA/EN各1本の生成完遂 |
 | RAG Evaluation | Golden Q&A 20件 | groundedness、保留動作 |
 | 台本品質 | サンプル資料での台本生成 | KB根拠のない記述の検出 |

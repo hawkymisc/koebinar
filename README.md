@@ -8,10 +8,13 @@
 
 | ファイル | 内容 |
 |---|---|
-| `docs/audit_report.md` | v1.0 監査結果 |
-| `docs/requirements.md` | 要件定義書 v1.7 |
-| `docs/specification.md` | システム仕様書 v1.7 |
+| `docs/audit_report.md` | 設計・仕様・実装・テストの現行整合性監査と不整合リスト |
+| `docs/requirements.md` | 要件定義書 v1.8 |
+| `docs/specification.md` | システム仕様書 v1.8 |
 | `docs/tenant-auth-console.md` | テナント分離・ログイン・サイドバー・連携設定仕様 |
+| `docs/article/koebinar-intro.md` | デモURL等の置換前に使う紹介記事ドラフト |
+
+要件・仕様は目標契約、コードは現在の挙動、テストは明示的に検査した範囲の証拠として扱う。達成状況と既知の差分は `docs/audit_report.md` を参照。
 
 ## ローカル B スタック（推奨）
 
@@ -90,7 +93,7 @@ HTTPSを自動設定する。詳細は `docs/deployment-lightsail.md` を参照�
 
 - プロジェクト: `remotion/`（Composition `Webinar` + `render.mjs`）
 - パイプライン Step 6 は `VideoRenderer` が Remotion を invoke
-- headless Chromium が使えない環境では **同じ entry** が double MP4（ftyp/mdat）にフォールバック
+- 本番経路はRemotion失敗時にfail-closedとし、映像・音声ストリームと尺のprobeに合格したMP4だけを公開可能にする。`renderer=double`は明示的なテストモード専用で、`publishable=false`として扱う
 - アダプタ境界はユニットテストで runner を差し替えて検証
 
 ```bash
@@ -142,7 +145,7 @@ npm run test:e2e
 
 外部 LLM/TTS は **API 互換モック**（`tests/mocks/providers.py`）。実 API キー不要。  
 テスト既定は `sync_pipeline=True` + render double（高速・決定的）。
-Playwright E2EだけはローカルのAPI互換モックと**実Remotionレンダリング**を使い、資料アップロードからH.264 MP4のブラウザ再生まで検証する。
+Playwright E2EだけはローカルのAPI互換モックと**実Remotionレンダリング**を使い、資料アップロードからH.264 MP4のブラウザ再生まで検証する。ブラウザ検査自体はmuteで行うが、レンダラーの統合テストと`ffprobe`契約で映像・音声ストリームと尺を別途検証する。
 
 ## 主要 API
 
@@ -175,4 +178,4 @@ Playwright E2EだけはローカルのAPI互換モックと**実Remotionレン�
 ## Version
 
 - App: 0.3.0 (B-stack + Remotion path + Web UI)
-- Spec docs: v1.7
+- Spec docs: v1.8
