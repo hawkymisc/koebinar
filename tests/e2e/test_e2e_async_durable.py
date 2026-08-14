@@ -148,8 +148,14 @@ def test_e2e_async_step_rerun(async_env):
         },
     ).json()
     assert w["status"] == "completed"
-    # enqueue video step async
-    r = c.post(f"/api/v1/webinars/{w['id']}/steps/video/run")
+    # Simulate leaving the settings page, selecting an existing webinar, and
+    # rerunning from outline in the separate worker process. The encrypted BYOK
+    # key must remain usable after the original registration request is over.
+    assert any(
+        integration["provider"] == "orcarouter"
+        for integration in c.get("/api/v1/integrations").json()
+    )
+    r = c.post(f"/api/v1/webinars/{w['id']}/steps/outline/run")
     assert r.status_code == 200
     assert r.json()["status"] == "queued"
     process_one(store, s, http_client=httpx.Client())

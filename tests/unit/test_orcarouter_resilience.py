@@ -258,8 +258,10 @@ def test_generation_403_does_not_mark_registered_key_invalid(
         key_mask="***key",
         status=IntegrationStatus.ACTIVE,
     )
-    transport = httpx.MockTransport(
-        lambda request: httpx.Response(
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"object": "list", "data": []})
+        return httpx.Response(
             403,
             json={
                 "error": {
@@ -269,7 +271,8 @@ def test_generation_403_does_not_mark_registered_key_invalid(
                 }
             },
         )
-    )
+
+    transport = httpx.MockTransport(handler)
     shared = httpx.Client(transport=transport)
     steps = GenerationSteps(store=store, settings=settings, http_client=shared)
     webinar = Webinar(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from typing import Any, Optional
 
@@ -18,13 +19,19 @@ class LLMError(Exception):
         message: str,
         status_code: int | None = None,
         *,
+        provider_code: str | None = None,
+        provider_message: str | None = None,
+        provider_type: str | None = None,
         error_code: str | None = None,
-        error_type: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
-        self.error_code = error_code
-        self.error_type = error_type
+        self.provider_code = provider_code
+        self.provider_message = provider_message
+        self.provider_type = provider_type
+        # Compatibility names used by retry and capability decisions.
+        self.error_code = error_code or provider_code
+        self.error_type = provider_type
 
 
 class OrcaRouterClient:
@@ -68,17 +75,60 @@ class OrcaRouterClient:
             "Content-Type": "application/json",
         }
 
+    def _safe_provider_text(self, value: Any, *, limit: int = 500) -> str | None:
+        if not isinstance(value, str):
+            return None
+        text = " ".join(value.split())
+        if not text:
+            return None
+        if self.api_key:
+            text = text.replace(self.api_key, "[redacted]")
+        return text[:limit]
+
+    def _response_error(self, operation: str, response: httpx.Response) -> LLMError:
+        provider_code: str | None = None
+        provider_message: str | None = None
+        provider_type: str | None = None
+        error_code: str | None = None
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            detail = payload.get("error") or payload.get("detail")
+            if isinstance(detail, dict):
+                raw_code = detail.get("code") or detail.get("type")
+                if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", raw_code):
+                    error_code = raw_code
+                provider_type = self._safe_provider_text(detail.get("type"), limit=100)
+                provider_code = self._safe_provider_text(
+                    raw_code, limit=100
+                )
+                provider_message = self._safe_provider_text(detail.get("message"))
+
+        message = f"OrcaRouter {operation} error: HTTP {response.status_code}"
+        if provider_code:
+            message += f" [{provider_code}]"
+        if provider_message:
+            message += f" {provider_message}"
+        return LLMError(
+            message,
+            status_code=response.status_code,
+            provider_code=provider_code,
+            provider_message=provider_message,
+            provider_type=provider_type,
+            error_code=error_code,
+        )
+
     def list_models(self) -> dict[str, Any]:
         url = f"{self.base_url}/models"
         try:
-            resp = self._client.get(url, headers=self._headers(), timeout=self._models_timeout)
+            response = self._client.get(url, headers=self._headers(), timeout=self._models_timeout)
         except httpx.HTTPError as exc:
             raise LLMError(f"OrcaRouter models request failed: {exc}") from exc
-        if resp.status_code == 401:
-            raise LLMError("invalid or unauthorized OrcaRouter API key", status_code=resp.status_code)
-        if resp.status_code >= 400:
-            raise self._response_error("models", resp)
-        return resp.json()
+        if response.status_code >= 400:
+            raise self._response_error("models", response)
+        return response.json()
 
     def chat_completions(
         self,
@@ -98,35 +148,31 @@ class OrcaRouterClient:
         if response_format is not None:
             payload["response_format"] = response_format
 
-        last_err: Exception | None = None
         retry_count = self.settings.orcarouter_max_retries if retries is None else retries
         attempts = max(1, retry_count + 1)
         for attempt in range(attempts):
             try:
-                resp = self._client.post(
+                response = self._client.post(
                     url,
                     headers=self._headers(),
                     json=payload,
                     timeout=self._timeout,
                 )
             except httpx.HTTPError as exc:
-                last_err = LLMError(f"OrcaRouter chat request failed: {exc}")
+                error = LLMError(f"OrcaRouter chat request failed: {exc}")
                 if attempt + 1 < attempts:
                     time.sleep(self._backoff_delay(attempt))
                     continue
-                raise last_err from exc
-            if resp.status_code == 401:
-                raise LLMError("invalid or unauthorized OrcaRouter API key", status_code=resp.status_code)
-            if resp.status_code >= 400:
-                last_err = self._response_error("chat", resp)
-                delay = self._retry_delay(resp, last_err, attempt)
+                raise error from exc
+            if response.status_code >= 400:
+                error = self._response_error("chat", response)
+                delay = self._retry_delay(response, error, attempt)
                 if attempt + 1 < attempts and delay is not None:
                     time.sleep(delay)
                     continue
-                raise last_err
-            return resp.json()
-        assert last_err is not None
-        raise last_err
+                raise error
+            return response.json()
+        raise AssertionError("unreachable OrcaRouter retry state")
 
     def _backoff_delay(self, attempt: int) -> float:
         return min(
@@ -168,35 +214,6 @@ class OrcaRouterClient:
             return None
         return delay
 
-    @staticmethod
-    def _response_error(operation: str, response: httpx.Response) -> LLMError:
-        error_code: str | None = None
-        error_type: str | None = None
-        message: str | None = None
-        try:
-            payload = response.json()
-            error = payload.get("error") if isinstance(payload, dict) else None
-            if isinstance(error, dict):
-                error_code = str(error.get("code") or "") or None
-                error_type = str(error.get("type") or "") or None
-                message = str(error.get("message") or "") or None
-        except (ValueError, TypeError):
-            pass
-        details = [f"HTTP {response.status_code}"]
-        if error_code:
-            details.append(f"code={error_code}")
-        if error_type:
-            details.append(f"type={error_type}")
-        if message:
-            safe_message = " ".join(message.split())[:500]
-            details.append(f"message={safe_message}")
-        return LLMError(
-            f"OrcaRouter {operation} error: {' '.join(details)}",
-            status_code=response.status_code,
-            error_code=error_code,
-            error_type=error_type,
-        )
-
     def chat_json(
         self,
         messages: list[dict[str, str]],
@@ -212,9 +229,8 @@ class OrcaRouterClient:
                 response_format={"type": "json_object"},
             )
         except LLMError as exc:
-            # OrcaRouter documents that Anthropic upstreams do not implement
-            # response_format. Auto Router may select one, so retry only this
-            # capability mismatch with the already JSON-instructed prompt.
+            # Anthropic upstreams do not implement response_format. Retry only
+            # this capability mismatch with the JSON-instructed prompt.
             if exc.status_code != 400 or exc.error_code != "api_not_implemented":
                 raise
             data = self.chat_completions(

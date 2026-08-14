@@ -6,7 +6,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 文書バージョン | v1.8 |
+| 文書バージョン | v1.13 |
 | 作成日 | 2026-08-08 |
 | 対象フェーズ | ハッカソンMVP / Phase 1 |
 | 文書区分 | ハッカソン開発用 |
@@ -27,10 +27,15 @@
 | 1.6 | 2026-08-12 | Web UI資料アップロード仕様（PDF/PPTXをブラウザ内抽出、§2.1）、追加指示`instructions`とKB紐付け厳格化（§3.2）を追加。B-stack（永続SQLite/非同期worker/Remotion経路）とWeb UI実装の反映 | チーム（要記入） |
 | 1.7 | 2026-08-14 | ワークスペース認証、テナント分離、サイドバー、連携設定画面を追加。詳細は `tenant-auth-console.md` | チーム（要記入） |
 | 1.8 | 2026-08-14 | 現行実装との整合性監査に基づき、非同期Worker構成、Step 2への追加指示の伝播、URL資料の扱いを明確化。PR #10の音声メディア・公開可否・Voice同意契約を反映し、未解消差分は `audit_report.md` に集約 | Codex |
+| 1.9 | 2026-08-15 | BYOK登録時の外部プロバイダー検証エラーを422へ正規化する契約と、OrcaRouter / ElevenLabsの必要アクセス範囲を開閉可能なヒントで案内するUI仕様を追加 | Codex |
+| 1.10 | 2026-08-15 | ElevenLabs登録検証をVoices Read必須・User Read任意へ変更し、安全な原因別エラーとメタデータ取得警告を定義 | Codex |
+| 1.11 | 2026-08-15 | ElevenLabsの構造化エラーをallowlist方式で抽出・キー伏字化し、接続検証とTTS失敗理由へ安全に反映する契約を追加 | Codex |
+| 1.12 | 2026-08-15 | BYOKフォームへElevenLabs `sk_`・OrcaRouter `sk-`の接頭辞検証とキーID誤コピー案内を追加 | Codex |
+| 1.13 | 2026-08-15 | OrcaRouterの既定モデルを`orcarouter/auto`へ修正し、Chat固有失敗と保存キー認証失敗を再検証で分離 | Codex |
 
 ## 1. 仕様範囲・設計原則
 
-本書は要件定義書v1.8のMust/Should要件を実装可能な粒度へ落とし込む。実装済みであることを示す文書ではなく、現行コード・テストとの差分は `audit_report.md` を正とする。
+本書は要件定義書v1.13のMust/Should要件を実装可能な粒度へ落とし込む。実装済みであることを示す文書ではなく、現行コード・テストとの差分は `audit_report.md` を正とする。
 
 ### 1.1 設計原則
 
@@ -129,8 +134,11 @@ daida-aiの6ステップ構成を流用し、Step 5-6をRemotionレンダリン�
 ## 4. OrcaRouter統合仕様
 
 - 接続: OpenAI互換SDKで `base_url = https://api.orcarouter.ai/v1`。APIキーは**運用者の持ち込みキー（BYOK）**をintegrationsから復号して使用する。デモ用フォールバックキーは環境変数 `ORCAROUTER_API_KEY`（`ALLOW_SYSTEM_LLM_KEY=true` のときのみ使用）。
-- キー検証: 登録時にモデル一覧取得（`GET /v1/models`）等の軽量呼び出しで有効性を確認する。401だけをキー無効として扱う。OrcaRouterの403は残高不足、キー単位の上限、モデル許可、IP制限等も表すため、登録済みキーを自動的にinvalidへ変更せず、`error.code`を優先して案内する。残高・レート上限の照会APIが利用可能であれば併用する（要確認: OD-09）。
+- キー検証: 登録時にモデル一覧取得（`GET /v1/models`）で有効性と参照権限を確認する。外部プロバイダーの401/403/429/5xxや通信失敗は、秘密情報を含まない `422 OrcaRouter APIキーを検証できませんでした` へ正規化し、検証前のintegrationを作成・更新しない。残高・レート上限の照会APIが利用可能であれば併用する（要確認: OD-09）。
+- 保存・再検証: 登録成功後のキーはテナント別に暗号化してSQLiteへ永続化し、APIの別リクエストと非同期Workerから復号する。Chat 401/403はモデル・権限・workspace・budget固有の可能性があるため、それだけでintegrationを`invalid`にしない。同じキーで`GET /v1/models`を再実行し、こちらも401/403の場合だけ無効化する。
+- 権限案内: 入力欄付近のキーボード操作可能な`[i]`ヒントに、接続確認の`GET /v1/models`、生成の`POST /v1/chat/completions`、モデル参照・チャット生成権限、有効期限・利用上限・IP制限を表示する。
 - ルーティング: 既定モデルIDは公式のAuto Routerである`orcarouter/auto`とし、環境変数`KOEBINAR_LLM_MODEL`で上書き可能にする。`adaptive`はHosted APIの公開モデルIDではないため使用しない。台本生成など品質重視の呼び出しのみ明示モデルを許可する。
+- エラー表示: OrcaRouterのJSON応答から構造化された`error.code/type/message`だけを抽出し、キー全文を`[redacted]`へ置換して長さを制限する。非構造化本文は画面・API・ログへ転送しない。
 - 構造化出力: outline/slides/script/Q&Aは`response_format={"type":"json_object"}`を第一選択とする。OrcaRouter公式仕様ではAnthropic upstreamは`response_format`非対応のため、`error.code=api_not_implemented`の400に限り、JSON出力を指示済みの同一プロンプトから`response_format`を外して1回再送する。他の400は再送しない。JSON object以外または不正JSONはStep失敗として扱う。
 - ガードレール: PII Shield、Prompt Injectionガードを有効化する（利用可能なプランの範囲で設定）。
 - 可観測性: 各運用者のOrcaRouterダッシュボードを一次のコスト・レイテンシ記録とし（BYOKのため運用者自身が自分の消費を確認できる）、アプリ側はrequest_id/model_id/prompt_versionのみ保存する。
@@ -162,15 +170,17 @@ MVPの実装はElevenLabsのみだが、interfaceは維持し将来のエンジ�
 キー管理はOrcaRouterと共通のintegrations機構を使う（暗号化保存・マスク表示・キー解決順序は設計原則および第4章と同一）。本節ではElevenLabs固有の検証・Voice連携を定義する。
 
 - **キー登録**: 運用者は設定画面から自分のElevenLabs APIキーを登録する。登録時に以下を検証する:
-  1. `GET /v1/user/subscription` をそのキーで呼び出し、有効性・tier・status・文字数残量（character_count / character_limit）・ボイススロットを取得
-  2. `GET /v1/voices` の呼び出し可否でVoices読み取りスコープを確認
-  3. TTSエンドポイントのスコープは短文の試し生成（数文字）または初回生成時に確認し、403時は必要スコープの設定手順を案内
-- **プラン警告**: providerから取得したtierを表示し、公開・商用利用・クレジット表記等の条件は利用時点の契約と規約を確認するよう案内する。警告対象の登録は確認の上でのみ許可する。
+  1. ブラウザで接頭辞`sk_`を検証し、不一致ならキーIDではなくAPIキー全文をコピーするよう表示して送信しない。OrcaRouterも同様に`sk-`を検証する
+  2. `GET /v1/voices` の呼び出し可否でキーの有効性とVoices Readスコープを確認する。この検証はTTSクレジットを消費しない
+  3. `GET /v1/user/subscription` は任意で呼び出し、`User Read`（`user_read`）が許可されていればtier・status・文字数残量（character_count / character_limit）を取得する。User Readがない場合も登録は成功させ、プラン・使用量が表示できない旨を警告する
+  4. TTSエンドポイントのText to Speechスコープは課金を避けるため登録時には呼び出さず、初回生成時に確認する
+- **検証エラー契約**: 必須のVoice一覧検証で発生した401/403/429/5xxや通信失敗は、原因別detail（キー無効・期限切れ/Voices Read・IP allowlist/レート制限/一時障害/接続失敗）を持つ422へ正規化する。ElevenLabsのJSON応答は構造化された`detail.status/code/type`、`detail.message`、`detail.request_id`だけを抽出し、キー全文を`[redacted]`へ置換して各フィールドの長さを制限する。非構造化本文は表示しない。接続検証では安全化したcode/messageを画面へ表示し、TTS失敗では同じ安全化済み理由をウェビナー/ジョブのエラーへ記録する。KoebinarのBearer認証401とは区別し、ブラウザのログインセッションを維持する。検証失敗時は既存integrationを作成・更新しない。
+- **プラン警告**: User Readがある場合はproviderから取得したtierと使用量を表示する。権限がない場合または任意照会が一時失敗した場合は、接続を妨げず取得不能の警告を表示する。公開・商用利用・クレジット表記等の条件は利用時点の契約と規約を確認するよう案内し、Free tierと判定できた登録は確認の上でのみ許可する。
 - **保存**: キーはアプリ層で暗号化（マスターキーは環境変数管理）してDB保存。復号はTTS呼び出し直前のサーバー側処理のみ。APIレスポンス・UI・ログには`sk_...`末尾4桁のマスクのみ。
 - **Voice同期・選択**: 登録キーで`GET /v1/voices`を呼び、Voice一覧（クローンVoice含む）をテナントスコープで同期する。一覧取得は同意を付与しない。運用者が動画生成に使うvoice_idを選択し、APIは現在テナントの有効かつ利用可能なVoiceかを検証する（作成UIの未実装差分は監査A-004）。
 - **削除/差替え**: キー削除時は該当integrationのvoice_refsを無効化する。キー差替え後に同一テナント・同一provider Voice IDが再同期された場合は、同意対象が変わらないため有効な証跡を維持し、新しいintegrationへ関連付ける。生成済み音声・動画は保持する。
 - **フォールバック**: BYOK未登録の場合、構成フラグ `ALLOW_SYSTEM_TTS_KEY=true` のときのみシステムキーで生成可能（デモ・開発用。生成物に「デモ用共有アカウント」フラグを付与）。OrcaRouter側は `ALLOW_SYSTEM_LLM_KEY` で同様に制御する。
-- **推奨案内**: 登録画面に「スコープをText to Speech＋Voices読み取りに制限し、クレジット上限・有効期限を設定した専用キーの発行を推奨」と表示する。
+- **推奨案内**: 入力欄直下にElevenLabsは`sk_`、OrcaRouterは`sk-`から始まることを常時表示する。キーボード操作可能な`[i]`ヒントには、接続確認で必須の`GET /v1/voices`（Voices Read）、プラン・使用量表示に任意の`GET /v1/user/subscription`（User Read / `user_read`）、生成の`POST /v1/text-to-speech/{voice_id}`（Text to Speech）、有効期限・IP allowlist・スコープ制限・クレジット上限、Freeプラン確認欄との関係を表示する。ヒントはモバイルviewport外へはみ出さない。
 
 ### 5.3 制約・運用
 
@@ -228,7 +238,7 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 | GET | /api/v1/public/webinars/{id}/video | 公開済みウェビナーのMP4（認証不要） |
 | POST | /api/v1/public/webinars/{id}/questions | 公開済みウェビナーへの視聴者質問（認証不要） |
 | GET | /api/v1/public/webinars/{id}/questions/{question_id} | 公開ページの回答取得（認証不要、ウェビナー所属を検証） |
-| POST | /api/v1/integrations/{provider} | キー登録（provider: orcarouter / elevenlabs。登録時検証を実行し、検証結果・警告を返す） |
+| POST | /api/v1/integrations/{provider} | キー登録（provider: orcarouter / elevenlabs。登録時検証を実行し、検証結果・警告を返す。外部プロバイダー検証失敗は安全なdetailの422） |
 | GET | /api/v1/integrations | 全プロバイダーの接続状態取得（キーはマスク表示、検証日時、ELはtier・残量含む） |
 | DELETE | /api/v1/integrations/{provider} | キー削除（ELは関連voice_refs無効化） |
 | GET | /api/v1/integrations/elevenlabs/voices | ElevenLabs登録キーのアカウントのVoice一覧取得 |
@@ -261,7 +271,9 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 |---|---|---|
 | OrcaRouter timeout | 1回リトライ後、Step失敗として停止 | 該当Stepから再実行可能 |
 | ElevenLabs APIエラー | 指数バックオフで2回リトライ。該当文をリテイクキューへ | 運用者に通知 |
-| 持ち込みキー無効化（401、Orca/EL共通） | integration.status=invalidに更新し該当機能の生成停止 | 再登録を案内 |
+| キー登録時の外部プロバイダー検証失敗（provider側401/403/429/5xx等） | Koebinar APIは安全なdetailの422を返し、integrationを作成・更新しない。オペレーターセッションは維持 | 連携設定画面内でキー・権限・期限・IP制限等の確認を案内 |
+| 保存済みOrcaRouterキーのChat 401/403 | `GET /v1/models`で再検証し、こちらも401/403の場合だけintegration.status=invalidへ更新 | Chat固有のcode/messageを安全化して表示。モデル・権限・workspace・budgetを確認 |
+| 保存済みElevenLabsキーの実行時401/403 | integration.status=invalidに更新し該当機能の生成停止 | 再登録を案内 |
 | 持ち込みキーのスコープ不足・権限エラー（403） | 生成停止 | 必要権限の設定手順を案内（EL: TTS/Voices読み取り） |
 | 持ち込みOrcaRouterキーの残高不足 | 生成失敗として停止 | 残高確認・チャージを案内。デモ時はフォールバックキーで継続 |
 | ElevenLabsクレジット枯渇 | キャッシュ利用、未生成分は保留。フォールバックTTSを提案 | 運用者に通知 |

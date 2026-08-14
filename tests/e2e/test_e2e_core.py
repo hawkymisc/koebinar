@@ -87,9 +87,14 @@ def test_integrations_byok_flow_no_full_key_leak(client: TestClient, register_ke
 
 def test_invalid_integration_keys(client: TestClient):
     r = client.post("/api/v1/integrations/orcarouter", json={"api_key": INVALID_ORCA_KEY})
-    assert r.status_code == 401 or r.status_code == 400
+    assert r.status_code == 422
+    assert r.json()["detail"] == "OrcaRouter APIキーを検証できませんでした"
+    assert INVALID_ORCA_KEY not in r.text
     r2 = client.post("/api/v1/integrations/elevenlabs", json={"api_key": INVALID_EL_KEY})
-    assert r2.status_code in (400, 401)
+    assert r2.status_code == 422
+    assert "無効・期限切れ" in r2.json()["detail"]
+    assert "Voices Read権限" in r2.json()["detail"]
+    assert INVALID_EL_KEY not in r2.text
 
 
 def test_full_pipeline_ja_and_artifacts(client: TestClient, register_keys):

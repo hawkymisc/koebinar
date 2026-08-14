@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, apiRequest, getToken, setToken } from './client'
+import { ApiError, apiRequest, getStoredTenant, getToken, setSession, setToken } from './client'
 import { createPublicQuestion, getPublicWebinar } from './endpoints'
 
 function mockFetchOnce(body: unknown, init: { status?: number; ok?: boolean } = {}) {
@@ -50,6 +50,34 @@ describe('apiRequest', () => {
     await expect(apiRequest('/webinars/missing')).rejects.toMatchObject(
       new ApiError(404, 'webinar not found'),
     )
+  })
+
+  it('keeps the operator session when provider validation returns 422', async () => {
+    setSession('acme-secret', { id: 'acme', name: 'Acme株式会社' })
+    const unauthorized = vi.fn()
+    window.addEventListener('koebinar:unauthorized', unauthorized)
+    mockFetchOnce({ detail: 'ElevenLabs APIキーが無効・期限切れ、またはVoices Read権限がありません。' }, { status: 422, ok: false })
+
+    await expect(apiRequest('/integrations/elevenlabs', { method: 'POST' })).rejects.toMatchObject({
+      status: 422,
+    })
+    expect(getToken()).toBe('acme-secret')
+    expect(getStoredTenant()).toEqual({ id: 'acme', name: 'Acme株式会社' })
+    expect(unauthorized).not.toHaveBeenCalled()
+    window.removeEventListener('koebinar:unauthorized', unauthorized)
+  })
+
+  it('clears the operator session when session validation returns 401', async () => {
+    setSession('acme-secret', { id: 'acme', name: 'Acme株式会社' })
+    const unauthorized = vi.fn()
+    window.addEventListener('koebinar:unauthorized', unauthorized)
+    mockFetchOnce({ detail: 'invalid bearer token' }, { status: 401, ok: false })
+
+    await expect(apiRequest('/auth/session')).rejects.toMatchObject({ status: 401 })
+    expect(getToken()).toBe('')
+    expect(getStoredTenant()).toBeNull()
+    expect(unauthorized).toHaveBeenCalledOnce()
+    window.removeEventListener('koebinar:unauthorized', unauthorized)
   })
 
   it('persists the token across getToken/setToken', () => {

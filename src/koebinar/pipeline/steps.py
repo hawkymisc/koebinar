@@ -178,8 +178,17 @@ class GenerationSteps:
             try:
                 result = client.chat_json(messages)
             except LLMError as exc:
-                if exc.status_code == 401:
-                    self.integrations.mark_invalid(Provider.ORCAROUTER)
+                if exc.status_code in (401, 403):
+                    # A chat-specific permission, model, workspace, or budget
+                    # failure does not prove that the stored key disappeared.
+                    # Revalidate with the same read-only endpoint used at
+                    # registration and invalidate only when authentication
+                    # fails there as well.
+                    try:
+                        client.list_models()
+                    except LLMError as validation_exc:
+                        if validation_exc.status_code in (401, 403):
+                            self.integrations.mark_invalid(Provider.ORCAROUTER)
                 raise
             self.store.add_generation_log(
                 purpose=purpose,

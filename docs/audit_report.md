@@ -2,10 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 監査日 | 2026-08-14 |
-| 基準コミット | `5ecaac3`（`main` / PR #10 マージ時点） |
+| 監査日 | 2026-08-15 |
+| 基準コミット | `11f73a5`（`origin/main`）+ `fix/elevenlabs-key-validation` 作業差分 |
 | 対象 | `README.md`、`docs/`、API、Worker、Web UI、Remotion、テスト、Compose設定 |
-| 判定 | **部分整合**。自動テストは通過したが、中核受入条件を満たさない、または証明できない不整合が残る |
+| 判定 | **部分整合**。Issue #12〜14の変更範囲はClean。リポジトリ全体には既報の未解消不整合が残る |
 | 未解消 | Critical 0件 / High 3件 / Medium 7件 / Low 3件（計13件） |
 | 解消済み | Critical 3件（A-001、A-002、A-005） |
 
@@ -30,13 +30,35 @@
 
 | 検証 | 結果 | 証明する範囲 |
 |---|---|---|
-| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **291 passed**、分岐込み **90.43%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
-| `cd web && npm test` | **16 passed** | APIクライアント、認証UI、Voice同意、ファイル抽出の単体契約 |
+| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **303 passed**、225 warnings、分岐込み **90.38%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
+| `cd web && npm test` | **23 passed** | APIクライアント、認証UI、キー接頭辞、権限ヒント、Voice同意、ファイル抽出の単体契約 |
 | `cd web && npm run build` | **pass** | TypeScript型検査とVite本番ビルド |
 | `cd web && npm run lint` | **pass** | Oxlint静的検査 |
-| `cd web && npm run test:e2e` | **1 passed**（53.4秒） | 実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&A。ブラウザ再生はmuteだが、同じ生成経路の`ffprobe`が音声ストリームも検査する。聴感品質・ナレーション内容は対象外 |
+| `cd web && npm run test:e2e` | **1 passed** | 実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&Aを再検証 |
 
-Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に220件のwarningが出た。
+Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に225件のwarningが出た（既報A-016）。
+
+### 2.1 Issue #12〜14 差分監査
+
+| 受入契約 | 実装証拠 | テスト証拠 | 判定 |
+|---|---|---|---|
+| 登録時の外部プロバイダー401/403等をKoebinar認証401と分離 | `IntegrationsService._validate_orcarouter/_validate_elevenlabs` が安全なdetailの422へ正規化 | service/API/Web client回帰テスト | Clean |
+| 検証失敗時にセッションと既存integrationを維持し、秘密情報を返さない | 保存は検証成功後のみ。Webは422で`clearSession`を実行しない | 401/403/429/500、既存record、localStorage、レスポンス非漏えいを検証 | Clean |
+| OrcaRouter / ElevenLabsの必要アクセス範囲を一貫したUIで案内 | 両カードにnative `details/summary`の`[i]`ヒント、モバイル用viewport内配置 | 文言、要素数、ARIA名、本番build、lintを検証 | Clean |
+| 要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.9、tenant-auth-consoleをv1.1へ更新 | 実装・テスト・3文書を相互照合 | Clean |
+| TTS + Voices ReadのみのElevenLabsキーを登録可能 | Voice一覧を必須検証、User Readを使うSubscription照会を任意化し取得不能警告を保存 | Subscription 403で登録成功、metadata非表示、警告を検証 | Clean |
+| ユーザーが安全に失敗原因を判別可能 | 401/403/429/5xx/通信失敗を秘密情報なしの原因別422へ変換 | 原因別detailとprovider本文・キー非漏えいを検証 | Clean |
+| 追加修正後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.10、tenant-auth-consoleをv1.2へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
+| ElevenLabs実応答から権限・IP等の失敗理由を判別可能 | 構造化code/messageだけを抽出し、キー伏字化・長さ制限後に接続/TTSエラーへ反映 | 構造化403の表示、キー非漏えい、非構造化本文非表示を検証 | Clean |
+| 実キーのローカル接続経路 | `.keys`をプロセス内だけで読み、Voices v1/v2、Subscription、サービス層、FastAPI登録を確認 | 全経路HTTP 200、starter/active、23 Voices、キー非出力 | Clean |
+| 実応答対応後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.11、tenant-auth-consoleをv1.3へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
+| キーID誤コピーを外部送信前に検出 | ElevenLabs `sk_`、OrcaRouter `sk-`をJSとHTML patternで検証し、期待接頭辞とAPIキー全文のコピーを案内 | 両プロバイダーの正常・欠落・取り違え、フォーム属性、文言を検証 | Clean |
+| 接頭辞検証後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.12、tenant-auth-consoleをv1.4へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
+| OrcaRouter保存キーを画面遷移・Worker・アウトライン再実行で継続利用 | テナント別暗号化SQLiteレコードを再解決し、Chat失敗時はモデル一覧で再認証 | API再open後の連携一覧、別Workerでのoutline再実行、Chat固有401でactive維持を検証 | Clean |
+| OrcaRouterの現行ルーターIDと一致 | 既定値・モック・production exampleを`orcarouter/auto`へ統一 | 実APIモデル一覧で`adaptive`なし・`orcarouter/auto`あり、全Chatモックでmodel IDを検証 | Clean |
+| OrcaRouter修正後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.13、tenant-auth-consoleをv1.5へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
+
+今回の変更範囲で新たな未記録不整合は検出しなかった。第5章の13件は既存監査で追跡中のため、今回スコープのClean判定には混在させない。
 
 ## 3. 整合を確認できた主な契約
 
@@ -46,6 +68,7 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 | 追加指示をアウトラインと台本へ分離して渡す | `GenerationSteps.generate_outline/generate_script` | `test_generation_keeps_instructions_separate...` | 整合 |
 | Bearer tokenからテナントを決定し、他テナントIDを404にする | `auth.py` / tenant-scoped services | `test_multitenant_auth.py` | 基本経路は整合。網羅性はA-011参照 |
 | BYOKの暗号化保存、マスク表示、削除後fail-closed | `crypto.py` / `IntegrationsService` | `test_crypto.py` / `test_e2e_core.py` | 整合 |
+| BYOK登録検証失敗とオペレーター認証失効の分離 | `IntegrationsService` / Web API client | provider status/API/session回帰テスト | 整合 |
 | SQLiteジョブと別Workerによる非同期再開 | `jobs.py` / `worker.py` | `test_e2e_async_durable.py` | 単一テナント経路は整合 |
 | 明示公開前は視聴不可、編集・再生成で公開解除 | public routes / orchestrator | `test_public_viewer_api.py` | 整合 |
 | Remotion動画に音声を配置し、probe済みMP4だけを公開可能にする | `Webinar.tsx` / `VideoRenderer` / `probe_media` | `test_audio_contract.py` / `test_public_viewer_api.py` | 整合 |
@@ -183,6 +206,13 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 6. READMEの監査説明、Remotionのfail-closed公開契約、音声probeの検証境界を明記した。
 7. Lightsail手順の古い「画面上部のAPIトークン」表現を、現在のログイン画面へ更新した。
 8. PR #10で解消した音声合成、公開可否、Voice同意のCritical指摘を解消済みへ移し、残課題を現行実装に合わせた。
+9. 登録時の外部プロバイダー認証エラーとKoebinarのオペレーター認証401を分離し、422契約と保存非更新を要件・仕様へ反映した。
+10. OrcaRouter / ElevenLabsで実際に利用する検証・生成APIと、期限・IP・スコープ・上限等の案内内容を仕様へ反映した。
+11. `tenant-auth-console.md`へ、検証失敗時のセッション維持、画面内エラー、`[i]`ヒントのアクセシビリティ契約を追加した。
+12. ElevenLabsのUser Readを任意化し、TTS + Voices Readキーの登録、プラン情報取得不能警告、安全な原因別エラーを実装・仕様・テストで整合させた。
+13. ElevenLabsの構造化エラーcode/messageをキー伏字化・長さ制限して画面へ表示し、非構造化本文は転送しない契約へ更新した。
+14. ElevenLabs `sk_`・OrcaRouter `sk-`の接頭辞をフロントエンドで検証し、キーID誤コピーを外部API呼び出し前に判別できるようにした。
+15. OrcaRouterの既定モデルを`orcarouter/auto`へ修正し、Chat固有エラーで保存キーを誤ってinvalid化しない再検証契約を追加した。
 
 ## 7. 推奨修正順
 

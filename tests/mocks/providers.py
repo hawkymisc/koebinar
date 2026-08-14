@@ -64,9 +64,19 @@ def install_mocks(
         key = _auth_bearer(request)
         if key != VALID_ORCA_KEY:
             return httpx.Response(401, json={"error": {"message": "invalid api key"}})
+        body = json.loads(request.content.decode("utf-8"))
+        if body.get("model") != "orcarouter/auto":
+            return httpx.Response(
+                401,
+                json={
+                    "error": {
+                        "code": "invalid_model",
+                        "message": "Use the orcarouter/auto router model.",
+                    }
+                },
+            )
         if orca_handler:
             return orca_handler(request)
-        body = json.loads(request.content.decode("utf-8"))
         content = _smart_llm_response(body)
         return httpx.Response(
             200,
