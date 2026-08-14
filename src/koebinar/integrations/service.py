@@ -220,7 +220,11 @@ class IntegrationsService:
         try:
             models = client.list_models()
         except LLMError as exc:
-            raise IntegrationError(str(exc), code="validation_failed", status_code=exc.status_code or 400) from exc
+            raise IntegrationError(
+                "OrcaRouter APIキーを検証できませんでした",
+                code="provider_validation_failed",
+                status_code=422,
+            ) from exc
         finally:
             if self.http_client is None:
                 client.close()
@@ -239,7 +243,11 @@ class IntegrationsService:
             sub = client.get_subscription()
             client.list_voices()  # scope check
         except ElevenLabsError as exc:
-            raise IntegrationError(str(exc), code="validation_failed", status_code=exc.status_code or 400) from exc
+            raise IntegrationError(
+                "ElevenLabs APIキーを検証できませんでした",
+                code="provider_validation_failed",
+                status_code=422,
+            ) from exc
         finally:
             if self.http_client is None:
                 client.close()

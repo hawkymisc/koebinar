@@ -134,10 +134,16 @@ def _scenarios() -> list[tuple[str, str, ScenarioFn]]:
         assert "key_mask" in r.json()
 
     def i_bad_orca(c: TestClient):
-        assert c.post("/api/v1/integrations/orcarouter", json={"api_key": INVALID_ORCA_KEY}).status_code in (400, 401)
+        response = c.post("/api/v1/integrations/orcarouter", json={"api_key": INVALID_ORCA_KEY})
+        assert response.status_code == 422
+        assert response.json()["detail"] == "OrcaRouter APIキーを検証できませんでした"
+        assert INVALID_ORCA_KEY not in response.text
 
     def i_bad_el(c: TestClient):
-        assert c.post("/api/v1/integrations/elevenlabs", json={"api_key": INVALID_EL_KEY}).status_code in (400, 401)
+        response = c.post("/api/v1/integrations/elevenlabs", json={"api_key": INVALID_EL_KEY})
+        assert response.status_code == 422
+        assert response.json()["detail"] == "ElevenLabs APIキーを検証できませんでした"
+        assert INVALID_EL_KEY not in response.text
 
     def i_empty_key(c: TestClient):
         assert c.post("/api/v1/integrations/orcarouter", json={"api_key": ""}).status_code in (400, 422)

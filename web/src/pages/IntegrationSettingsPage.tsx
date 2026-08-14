@@ -15,18 +15,21 @@ const PROVIDERS: Array<{
   name: string
   description: string
   hint: string
+  permissionHint: string
 }> = [
   {
     id: 'orcarouter',
     name: 'OrcaRouter',
     description: 'アウトライン・台本・Q&Aの生成に使用します。',
     hint: 'モデル一覧の読み取り権限を持つキー',
+    permissionHint: '接続確認では GET /v1/models、ウェビナー構成・台本・Q&Aの生成では POST /v1/chat/completions を使用します。OrcaRouterのキー作成時に、モデル一覧の参照とチャット生成を実行できる権限を付与してください。有効期限・利用上限・IP制限も、接続または生成の失敗要因になり得ます。',
   },
   {
     id: 'elevenlabs',
     name: 'ElevenLabs',
     description: 'クローン音声によるナレーション生成に使用します。',
     hint: 'TTSとVoices読み取り権限を持つキー',
+    permissionHint: '接続確認では GET /v1/user/subscription と GET /v1/voices、音声生成では POST /v1/text-to-speech/{voice_id} を使用します。ElevenLabsのキー作成時に、これらへアクセスできる権限を付与してください。有効期限・IP allowlist・スコープ制限も接続失敗要因になり得ます。Freeプランでは商用利用条件を確認し、下の確認欄にチェックしてください。',
   },
 ]
 
@@ -88,7 +91,8 @@ export function IntegrationSettingsPage() {
       setMessage(`${PROVIDERS.find((item) => item.id === provider)?.name} を接続しました。`)
       await reload()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'APIキーを検証できませんでした。')
+      const detail = err instanceof ApiError ? ` ${err.message}` : ''
+      setError(`APIキーを検証できませんでした。${detail}`)
     } finally {
       setBusy(null)
     }
@@ -233,9 +237,16 @@ export function IntegrationSettingsPage() {
                 </div>
               ) : (
                 <form className="integration-form" onSubmit={(event) => void handleRegister(event, provider.id)}>
-                  <label className="field">
-                    APIキー
+                  <div className="field">
+                    <div className="field-label-row">
+                      <label htmlFor={`${provider.id}-api-key`}>APIキー</label>
+                      <details className="permission-hint">
+                        <summary aria-label={`${provider.name} APIキーの必要権限を表示`}>[i]</summary>
+                        <p>{provider.permissionHint}</p>
+                      </details>
+                    </div>
                     <input
+                      id={`${provider.id}-api-key`}
                       type="password"
                       autoComplete="off"
                       required
@@ -243,7 +254,7 @@ export function IntegrationSettingsPage() {
                       onChange={(event) => setKeys((current) => ({ ...current, [provider.id]: event.target.value }))}
                       placeholder={provider.hint}
                     />
-                  </label>
+                  </div>
                   {provider.id === 'elevenlabs' && (
                     <label className="consent-row">
                       <input type="checkbox" checked={acceptFreeTier} onChange={(event) => setAcceptFreeTier(event.target.checked)} />

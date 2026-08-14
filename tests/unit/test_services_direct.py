@@ -11,6 +11,7 @@ from koebinar.models import (
     Answerability,
     Chunk,
     IntegrationRegisterRequest,
+    IntegrationStatus,
     KnowledgeCreateRequest,
     Provider,
     Question,
@@ -95,10 +96,51 @@ def test_integrations_register_list_delete_mask(svc_env):
 def test_integrations_invalid_keys(svc_env):
     settings, store, client = svc_env
     svc = IntegrationsService(store=store, settings=settings, http_client=client)
-    with pytest.raises(IntegrationError):
+    with pytest.raises(IntegrationError) as orca_error:
         svc.register(Provider.ORCAROUTER, IntegrationRegisterRequest(api_key=INVALID_ORCA_KEY))
+    assert orca_error.value.code == "provider_validation_failed"
+    assert orca_error.value.status_code == 422
+
+    with pytest.raises(IntegrationError) as elevenlabs_error:
+        svc.register(Provider.ELEVENLABS, IntegrationRegisterRequest(api_key=INVALID_EL_KEY))
+    assert elevenlabs_error.value.code == "provider_validation_failed"
+    assert elevenlabs_error.value.status_code == 422
+    assert store.integrations == {}
+
+
+def test_failed_validation_does_not_replace_an_existing_integration(svc_env):
+    settings, store, client = svc_env
+    svc = IntegrationsService(store=store, settings=settings, http_client=client)
+    original = svc.register(Provider.ELEVENLABS, IntegrationRegisterRequest(api_key=VALID_EL_KEY))
+
     with pytest.raises(IntegrationError):
         svc.register(Provider.ELEVENLABS, IntegrationRegisterRequest(api_key=INVALID_EL_KEY))
+
+    persisted = store.integrations[Provider.ELEVENLABS]
+    assert persisted.id == original.id
+    assert persisted.status == IntegrationStatus.ACTIVE
+    assert INVALID_EL_KEY not in persisted.encrypted_api_key
+
+
+@pytest.mark.parametrize("provider_status", [403, 429, 500])
+def test_elevenlabs_provider_errors_use_non_authentication_status(
+    settings: Settings, store: Store, provider_status: int
+):
+    def reject(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(provider_status, json={"detail": "provider rejected the key"})
+
+    with httpx.Client(transport=httpx.MockTransport(reject)) as client:
+        svc = IntegrationsService(store=store, settings=settings, http_client=client)
+        with pytest.raises(IntegrationError) as error:
+            svc.register(
+                Provider.ELEVENLABS,
+                IntegrationRegisterRequest(api_key="xi-el-sensitive-value"),
+            )
+
+    assert error.value.code == "provider_validation_failed"
+    assert error.value.status_code == 422
+    assert "xi-el-sensitive-value" not in str(error.value)
+    assert store.integrations == {}
 
 
 def test_elevenlabs_free_tier_requires_accept(svc_env):
