@@ -66,11 +66,35 @@ def test_llm_client_errors_and_parse():
         c.close()
 
     with respx.mock:
-        respx.get("https://api.orcarouter.ai/v1/models").mock(return_value=httpx.Response(500, text="err"))
+        respx.get("https://api.orcarouter.ai/v1/models").mock(
+            return_value=httpx.Response(500, text="private upstream body")
+        )
         c = OrcaRouterClient("k")
-        with pytest.raises(LLMError):
+        with pytest.raises(LLMError) as unstructured_error:
             c.list_models()
         c.close()
+        assert "private upstream body" not in str(unstructured_error.value)
+
+    api_key = "sk-sensitive-orca-key"
+    with respx.mock:
+        respx.post("https://api.orcarouter.ai/v1/chat/completions").mock(
+            return_value=httpx.Response(
+                401,
+                json={
+                    "error": {
+                        "code": "invalid_model",
+                        "message": f"API key {api_key} cannot use model adaptive",
+                    }
+                },
+            )
+        )
+        c = OrcaRouterClient(api_key)
+        with pytest.raises(LLMError) as structured_error:
+            c.chat_completions([{"role": "user", "content": "hi"}], retries=0)
+        c.close()
+        assert structured_error.value.provider_code == "invalid_model"
+        assert structured_error.value.provider_message == "API key [redacted] cannot use model adaptive"
+        assert api_key not in str(structured_error.value)
 
     with respx.mock:
         respx.post("https://api.orcarouter.ai/v1/chat/completions").mock(
@@ -91,7 +115,7 @@ def test_llm_client_errors_and_parse():
         c.close()
 
     with respx.mock:
-        respx.post("https://api.orcarouter.ai/v1/chat/completions").mock(
+        route = respx.post("https://api.orcarouter.ai/v1/chat/completions").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -104,6 +128,8 @@ def test_llm_client_errors_and_parse():
         c = OrcaRouterClient("k")
         assert c.chat_json([{"role": "user", "content": "x"}])["already"] == "dict"
         c.close()
+        request_body = json.loads(route.calls[0].request.content)
+        assert request_body["model"] == "orcarouter/auto"
 
     with pytest.raises(LLMError):
         parse_chat_content({})
@@ -351,7 +377,7 @@ def test_steps_fallback_paths(settings: Settings, store: Store):
     )
     with respx.mock(assert_all_called=False) as router:
         router.get(url__regex=r".*/models/?$").respond(
-            200, json={"data": [{"id": "adaptive"}]}
+            200, json={"data": [{"id": "orcarouter/auto"}]}
         )
         router.post(url__regex=r".*/chat/completions/?$").respond(
             200,
@@ -377,6 +403,13 @@ def test_steps_fallback_paths(settings: Settings, store: Store):
         assert empty["slides"]
         # auth failure
         router.post(url__regex=r".*/chat/completions/?$").respond(401, json={"error": "no"})
+        with pytest.raises(LLMError):
+            steps.generate_outline(w)
+        assert store.integrations[Provider.ORCAROUTER].status == IntegrationStatus.ACTIVE
+
+        router.get(url__regex=r".*/models/?$").respond(
+            401, json={"error": {"code": "invalid_api_key", "message": "Invalid API key"}}
+        )
         with pytest.raises(LLMError):
             steps.generate_outline(w)
         assert store.integrations[Provider.ORCAROUTER].status == IntegrationStatus.INVALID

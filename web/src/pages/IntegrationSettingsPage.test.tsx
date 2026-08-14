@@ -1,8 +1,30 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { IntegrationSettingsPage } from './IntegrationSettingsPage'
+import { validateApiKeyPrefix } from './integrationKeyValidation'
 
 describe('IntegrationSettingsPage provider permission hints', () => {
+  it('rejects API keys whose provider prefix is missing or incorrect', () => {
+    expect(validateApiKeyPrefix('elevenlabs', 'sk_valid-elevenlabs-key')).toBeNull()
+    expect(validateApiKeyPrefix('orcarouter', 'sk-valid-orcarouter-key')).toBeNull()
+
+    expect(validateApiKeyPrefix('elevenlabs', 'valid-elevenlabs-key')).toContain('sk_')
+    expect(validateApiKeyPrefix('elevenlabs', 'sk-valid-elevenlabs-key')).toContain('キーIDではなくAPIキー全文')
+    expect(validateApiKeyPrefix('orcarouter', 'valid-orcarouter-key')).toContain('sk-')
+    expect(validateApiKeyPrefix('orcarouter', 'sk_valid-orcarouter-key')).toContain('キーIDではなくAPIキー全文')
+  })
+
+  it('declares provider-specific prefix constraints on both key fields', () => {
+    const html = renderToStaticMarkup(<IntegrationSettingsPage />)
+
+    expect(html).toContain('id="orcarouter-api-key"')
+    expect(html).toContain('pattern="sk-.*"')
+    expect(html).toContain('OrcaRouterのAPIキーは sk- から始まります')
+    expect(html).toContain('id="elevenlabs-api-key"')
+    expect(html).toContain('pattern="sk_.*"')
+    expect(html).toContain('ElevenLabsのAPIキーは sk_ から始まります')
+  })
+
   it('documents the OrcaRouter validation and generation access requirements', () => {
     const html = renderToStaticMarkup(<IntegrationSettingsPage />)
 

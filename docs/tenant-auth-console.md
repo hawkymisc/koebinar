@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 文書バージョン | v1.3 |
+| 文書バージョン | v1.5 |
 | 対象 | Koebinar 運用者コンソール / API |
 | 状態 | 実装契約 |
 
@@ -86,7 +86,9 @@
 - モバイル幅ではサイドバーを上部ナビゲーションへ折り返す。
 - 連携設定では OrcaRouter と ElevenLabs をカード表示し、接続状態、マスク済みキー、最終検証時刻、プラン/残クレジット/警告を確認できる。
 - API キー登録時はサーバー検証が成功してから接続済みにする。キー全文は送信後に入力欄から消す。
-- 検証失敗時はintegrationを作成・更新せず、キー無効・期限切れ、必要権限・IP制限、レート制限、外部障害等の安全な原因別エラーを表示する。ElevenLabsは安全化済みの構造化code/messageを併記するが、非構造化本文やキー全文はAPIレスポンス・ログへ出さない。
+- 登録成功後に入力欄が空になるのはキー全文を再表示しないためであり、接続カードにはマスク済みキーと状態を表示する。暗号化キーは画面遷移後もSQLiteに残り、既存ウェビナーの再実行と非同期Workerで利用する。
+- APIキー入力は送信前にElevenLabsの`sk_`、OrcaRouterの`sk-`接頭辞を検証する。不一致時は外部APIへ送信せず、キーIDではなくAPIキー全文をコピーするようエラー表示する。各入力欄の直下にも期待する接頭辞を表示する。
+- 検証失敗時はintegrationを作成・更新せず、キー無効・期限切れ、必要権限・IP制限、レート制限、外部障害等の安全な原因別エラーを表示する。ElevenLabsとOrcaRouterは安全化済みの構造化code/messageを併記するが、非構造化本文やキー全文はAPIレスポンス・ログへ出さない。
 - 各APIキー入力欄の`[i]`ヒントはクリックとキーボードで開閉でき、OrcaRouterは`GET /v1/models`と`POST /v1/chat/completions`、ElevenLabsは必須の`GET /v1/voices`（Voices Read）、任意の`GET /v1/user/subscription`（User Read / `user_read`）、生成時の`POST /v1/text-to-speech/{voice_id}`（Text to Speech）の用途を説明する。期限・IP制限・スコープ・利用上限も案内し、モバイル幅でviewport外へはみ出さない。
 - ElevenLabsのUser Readがない場合もTTS + Voices Readキーの登録は成功させ、プラン・使用量を表示できない旨を警告する。
 - ElevenLabs 接続後は Voice 一覧を再読込できる。Free tier の登録は利用条件への明示同意を必須とする。

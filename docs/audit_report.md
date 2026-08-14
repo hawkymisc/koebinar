@@ -30,13 +30,13 @@
 
 | 検証 | 結果 | 証明する範囲 |
 |---|---|---|
-| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **303 passed**、分岐込み **90.37%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
-| `cd web && npm test` | **21 passed** | APIクライアント、認証UI、権限ヒント、Voice同意、ファイル抽出の単体契約 |
+| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **303 passed**、225 warnings、分岐込み **90.38%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
+| `cd web && npm test` | **23 passed** | APIクライアント、認証UI、キー接頭辞、権限ヒント、Voice同意、ファイル抽出の単体契約 |
 | `cd web && npm run build` | **pass** | TypeScript型検査とVite本番ビルド |
 | `cd web && npm run lint` | **pass** | Oxlint静的検査 |
-| `cd web && npm run test:e2e` | **今回未再実行**（前回監査: 1 passed） | 今回は生成・動画経路を変更していない。前回は実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&Aを検証 |
+| `cd web && npm run test:e2e` | **1 passed** | 実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&Aを再検証 |
 
-Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に228件のwarningが出た（既報A-016）。
+Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に225件のwarningが出た（既報A-016）。
 
 ### 2.1 Issue #12〜14 差分監査
 
@@ -52,6 +52,11 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 | ElevenLabs実応答から権限・IP等の失敗理由を判別可能 | 構造化code/messageだけを抽出し、キー伏字化・長さ制限後に接続/TTSエラーへ反映 | 構造化403の表示、キー非漏えい、非構造化本文非表示を検証 | Clean |
 | 実キーのローカル接続経路 | `.keys`をプロセス内だけで読み、Voices v1/v2、Subscription、サービス層、FastAPI登録を確認 | 全経路HTTP 200、starter/active、23 Voices、キー非出力 | Clean |
 | 実応答対応後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.11、tenant-auth-consoleをv1.3へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
+| キーID誤コピーを外部送信前に検出 | ElevenLabs `sk_`、OrcaRouter `sk-`をJSとHTML patternで検証し、期待接頭辞とAPIキー全文のコピーを案内 | 両プロバイダーの正常・欠落・取り違え、フォーム属性、文言を検証 | Clean |
+| 接頭辞検証後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.12、tenant-auth-consoleをv1.4へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
+| OrcaRouter保存キーを画面遷移・Worker・アウトライン再実行で継続利用 | テナント別暗号化SQLiteレコードを再解決し、Chat失敗時はモデル一覧で再認証 | API再open後の連携一覧、別Workerでのoutline再実行、Chat固有401でactive維持を検証 | Clean |
+| OrcaRouterの現行ルーターIDと一致 | 既定値・モック・production exampleを`orcarouter/auto`へ統一 | 実APIモデル一覧で`adaptive`なし・`orcarouter/auto`あり、全Chatモックでmodel IDを検証 | Clean |
+| OrcaRouter修正後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.13、tenant-auth-consoleをv1.5へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
 
 今回の変更範囲で新たな未記録不整合は検出しなかった。第5章の13件は既存監査で追跡中のため、今回スコープのClean判定には混在させない。
 
@@ -206,6 +211,8 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 11. `tenant-auth-console.md`へ、検証失敗時のセッション維持、画面内エラー、`[i]`ヒントのアクセシビリティ契約を追加した。
 12. ElevenLabsのUser Readを任意化し、TTS + Voices Readキーの登録、プラン情報取得不能警告、安全な原因別エラーを実装・仕様・テストで整合させた。
 13. ElevenLabsの構造化エラーcode/messageをキー伏字化・長さ制限して画面へ表示し、非構造化本文は転送しない契約へ更新した。
+14. ElevenLabs `sk_`・OrcaRouter `sk-`の接頭辞をフロントエンドで検証し、キーID誤コピーを外部API呼び出し前に判別できるようにした。
+15. OrcaRouterの既定モデルを`orcarouter/auto`へ修正し、Chat固有エラーで保存キーを誤ってinvalid化しない再検証契約を追加した。
 
 ## 7. 推奨修正順
 

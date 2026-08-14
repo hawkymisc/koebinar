@@ -317,6 +317,11 @@
   align-self: flex-start;
 }
 
+.integration-form .field small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .field-label-row {
   display: flex;
   align-items: center;
