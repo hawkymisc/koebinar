@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 文書バージョン | v1.2 |
+| 文書バージョン | v1.3 |
 | 対象 | Koebinar 運用者コンソール / API |
 | 状態 | 実装契約 |
 
@@ -40,7 +40,7 @@
 4. 起動時は `GET /api/v1/auth/session` で保存済み token を再検証する。401 の場合は保存情報を破棄してログイン画面へ戻す。
 5. ログアウトはブラウザ内の認証情報を削除する。サーバー側セッションは保持しない。
 
-外部プロバイダーのAPIキー登録時にOrcaRouter / ElevenLabsが返す401・403等は、Koebinarの認証失効ではない。`POST /api/v1/integrations/{provider}` はこれらを安全なdetailの422へ正規化し、Web UIはログイン情報を維持したまま連携設定画面に検証エラーを表示する。
+外部プロバイダーのAPIキー登録時にOrcaRouter / ElevenLabsが返す401・403等は、Koebinarの認証失効ではない。`POST /api/v1/integrations/{provider}` はこれらを安全なdetailの422へ正規化し、Web UIはログイン情報を維持したまま連携設定画面に検証エラーを表示する。ElevenLabsの応答は構造化されたcode/messageだけを採用し、APIキーを伏せて長さを制限する。非構造化のレスポンス本文は画面・API・ログへ転送しない。
 
 トークン全文を API レスポンス、ログ、画面のログイン後領域へ再表示しない。比較には定時間比較を使う。
 
@@ -86,7 +86,7 @@
 - モバイル幅ではサイドバーを上部ナビゲーションへ折り返す。
 - 連携設定では OrcaRouter と ElevenLabs をカード表示し、接続状態、マスク済みキー、最終検証時刻、プラン/残クレジット/警告を確認できる。
 - API キー登録時はサーバー検証が成功してから接続済みにする。キー全文は送信後に入力欄から消す。
-- 検証失敗時はintegrationを作成・更新せず、キー無効・期限切れ、必要権限・IP制限、レート制限、外部障害等の安全な原因別エラーを表示する。外部プロバイダーのレスポンス本文やキー全文はAPIレスポンス・ログへ出さない。
+- 検証失敗時はintegrationを作成・更新せず、キー無効・期限切れ、必要権限・IP制限、レート制限、外部障害等の安全な原因別エラーを表示する。ElevenLabsは安全化済みの構造化code/messageを併記するが、非構造化本文やキー全文はAPIレスポンス・ログへ出さない。
 - 各APIキー入力欄の`[i]`ヒントはクリックとキーボードで開閉でき、OrcaRouterは`GET /v1/models`と`POST /v1/chat/completions`、ElevenLabsは必須の`GET /v1/voices`（Voices Read）、任意の`GET /v1/user/subscription`（User Read / `user_read`）、生成時の`POST /v1/text-to-speech/{voice_id}`（Text to Speech）の用途を説明する。期限・IP制限・スコープ・利用上限も案内し、モバイル幅でviewport外へはみ出さない。
 - ElevenLabsのUser Readがない場合もTTS + Voices Readキーの登録は成功させ、プラン・使用量を表示できない旨を警告する。
 - ElevenLabs 接続後は Voice 一覧を再読込できる。Free tier の登録は利用条件への明示同意を必須とする。

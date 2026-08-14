@@ -218,6 +218,35 @@ def test_elevenlabs_voice_validation_explains_connection_failure(
     assert "provider network detail" not in str(error.value)
 
 
+def test_elevenlabs_voice_validation_surfaces_structured_provider_reason(
+    settings: Settings, store: Store
+):
+    def reject(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/voices")
+        return httpx.Response(
+            403,
+            json={
+                "detail": {
+                    "status": "ip_not_allowed",
+                    "message": "This API key cannot be used from the current IP address.",
+                }
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(reject)) as client:
+        svc = IntegrationsService(store=store, settings=settings, http_client=client)
+        with pytest.raises(IntegrationError) as error:
+            svc.register(
+                Provider.ELEVENLABS,
+                IntegrationRegisterRequest(api_key="xi-sensitive-key"),
+            )
+
+    message = str(error.value)
+    assert "ip_not_allowed" in message
+    assert "current IP address" in message
+    assert "xi-sensitive-key" not in message
+
+
 def test_elevenlabs_free_tier_requires_accept(svc_env):
     settings, store, client = svc_env
     svc = IntegrationsService(store=store, settings=settings, http_client=client)

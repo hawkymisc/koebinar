@@ -30,13 +30,13 @@
 
 | 検証 | 結果 | 証明する範囲 |
 |---|---|---|
-| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **301 passed**、分岐込み **90.32%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
+| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **303 passed**、分岐込み **90.37%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
 | `cd web && npm test` | **21 passed** | APIクライアント、認証UI、権限ヒント、Voice同意、ファイル抽出の単体契約 |
 | `cd web && npm run build` | **pass** | TypeScript型検査とVite本番ビルド |
 | `cd web && npm run lint` | **pass** | Oxlint静的検査 |
 | `cd web && npm run test:e2e` | **今回未再実行**（前回監査: 1 passed） | 今回は生成・動画経路を変更していない。前回は実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&Aを検証 |
 
-Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に226件のwarningが出た（既報A-016）。
+Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に228件のwarningが出た（既報A-016）。
 
 ### 2.1 Issue #12〜14 差分監査
 
@@ -49,6 +49,9 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 | TTS + Voices ReadのみのElevenLabsキーを登録可能 | Voice一覧を必須検証、User Readを使うSubscription照会を任意化し取得不能警告を保存 | Subscription 403で登録成功、metadata非表示、警告を検証 | Clean |
 | ユーザーが安全に失敗原因を判別可能 | 401/403/429/5xx/通信失敗を秘密情報なしの原因別422へ変換 | 原因別detailとprovider本文・キー非漏えいを検証 | Clean |
 | 追加修正後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.10、tenant-auth-consoleをv1.2へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
+| ElevenLabs実応答から権限・IP等の失敗理由を判別可能 | 構造化code/messageだけを抽出し、キー伏字化・長さ制限後に接続/TTSエラーへ反映 | 構造化403の表示、キー非漏えい、非構造化本文非表示を検証 | Clean |
+| 実キーのローカル接続経路 | `.keys`をプロセス内だけで読み、Voices v1/v2、Subscription、サービス層、FastAPI登録を確認 | 全経路HTTP 200、starter/active、23 Voices、キー非出力 | Clean |
+| 実応答対応後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.11、tenant-auth-consoleをv1.3へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
 
 今回の変更範囲で新たな未記録不整合は検出しなかった。第5章の13件は既存監査で追跡中のため、今回スコープのClean判定には混在させない。
 
@@ -202,6 +205,7 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 10. OrcaRouter / ElevenLabsで実際に利用する検証・生成APIと、期限・IP・スコープ・上限等の案内内容を仕様へ反映した。
 11. `tenant-auth-console.md`へ、検証失敗時のセッション維持、画面内エラー、`[i]`ヒントのアクセシビリティ契約を追加した。
 12. ElevenLabsのUser Readを任意化し、TTS + Voices Readキーの登録、プラン情報取得不能警告、安全な原因別エラーを実装・仕様・テストで整合させた。
+13. ElevenLabsの構造化エラーcode/messageをキー伏字化・長さ制限して画面へ表示し、非構造化本文は転送しない契約へ更新した。
 
 ## 7. 推奨修正順
 

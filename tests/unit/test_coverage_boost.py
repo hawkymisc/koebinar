@@ -171,6 +171,55 @@ def test_elevenlabs_client_errors():
         c.close()
 
 
+def test_elevenlabs_client_preserves_safe_structured_error_detail():
+    api_key = "xi-sensitive-key"
+    with respx.mock:
+        respx.get("https://api.elevenlabs.io/v1/voices").mock(
+            return_value=httpx.Response(
+                403,
+                json={
+                    "detail": {
+                        "status": "missing_permissions",
+                        "message": f"API key {api_key} is missing voices_read",
+                        "request_id": "req_debug_123",
+                    }
+                },
+            )
+        )
+        client = ElevenLabsClient(api_key)
+        with pytest.raises(ElevenLabsError) as error:
+            client.list_voices()
+        client.close()
+
+    assert error.value.status_code == 403
+    assert error.value.provider_code == "missing_permissions"
+    assert error.value.provider_message == "API key [redacted] is missing voices_read"
+    assert error.value.request_id == "req_debug_123"
+    assert api_key not in str(error.value)
+    assert "missing_permissions" in str(error.value)
+    assert "voices_read" in str(error.value)
+
+    with respx.mock:
+        respx.post("https://api.elevenlabs.io/v1/text-to-speech/v1").mock(
+            return_value=httpx.Response(
+                403,
+                json={
+                    "detail": {
+                        "code": "missing_permissions",
+                        "message": "The API key is missing text_to_speech.",
+                    }
+                },
+            )
+        )
+        client = ElevenLabsClient(api_key)
+        with pytest.raises(ElevenLabsError) as tts_error:
+            client.text_to_speech("v1", "hi", retries=0)
+        client.close()
+
+    assert tts_error.value.provider_code == "missing_permissions"
+    assert "text_to_speech" in str(tts_error.value)
+
+
 def test_integrations_resolve_system_fallback_and_decrypt_fail(settings: Settings, store: Store):
     settings.allow_system_llm_key = True
     settings.orcarouter_api_key = "sys-orca"

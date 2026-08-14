@@ -300,25 +300,35 @@ class IntegrationsService:
     @staticmethod
     def _elevenlabs_voice_validation_message(exc: ElevenLabsError) -> str:
         if exc.status_code == 401:
-            return (
+            message = (
                 "ElevenLabs APIキーが無効・期限切れ、またはVoices Read権限がありません。"
                 "キーの有効性とVoices Read権限を確認してください。"
             )
-        if exc.status_code == 403:
-            return (
+        elif exc.status_code == 403:
+            message = (
                 "ElevenLabsのVoice一覧へのアクセスが拒否されました。"
                 "Voices Read権限とIP allowlistを確認してください。"
             )
-        if exc.status_code == 429:
-            return (
+        elif exc.status_code == 429:
+            message = (
                 "ElevenLabs APIのレート制限に達したため、キーを検証できませんでした。"
                 "時間をおいて再試行してください。"
             )
-        if exc.status_code is not None and exc.status_code >= 500:
-            return "ElevenLabsの一時的な障害により、APIキーを検証できませんでした。"
-        if exc.status_code is None:
-            return "ElevenLabsに接続できないため、APIキーを検証できませんでした。"
-        return f"ElevenLabsのVoice一覧を取得できませんでした（HTTP {exc.status_code}）。"
+        elif exc.status_code is not None and exc.status_code >= 500:
+            message = "ElevenLabsの一時的な障害により、APIキーを検証できませんでした。"
+        elif exc.status_code is None:
+            message = "ElevenLabsに接続できないため、APIキーを検証できませんでした。"
+        else:
+            message = f"ElevenLabsのVoice一覧を取得できませんでした（HTTP {exc.status_code}）。"
+
+        details: list[str] = []
+        if exc.provider_code:
+            details.append(f"code={exc.provider_code}")
+        if exc.provider_message:
+            details.append(exc.provider_message)
+        if details:
+            message += f" ElevenLabs応答: {' / '.join(details)}"
+        return message
 
     def _to_view(self, rec: IntegrationRecord) -> IntegrationView:
         return IntegrationView(
