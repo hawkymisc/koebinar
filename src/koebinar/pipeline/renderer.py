@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import struct
 import subprocess
@@ -32,6 +33,58 @@ MediaProbe = Callable[..., dict[str, Any]]
 
 class RenderError(Exception):
     pass
+
+
+def _run_subprocess_tree(
+    cmd: list[str],
+    *,
+    cwd: str | None = None,
+    capture_output: bool = False,
+    text: bool = False,
+    timeout: float | None = None,
+    env: dict[str, str] | None = None,
+    check: bool = False,
+) -> subprocess.CompletedProcess:
+    """Run a command in its own session so a timeout reaps its child tree."""
+    stdout = subprocess.PIPE if capture_output else None
+    stderr = subprocess.PIPE if capture_output else None
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=stdout,
+        stderr=stderr,
+        text=text,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        captured_stdout, captured_stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            captured_stdout, captured_stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            captured_stdout, captured_stderr = process.communicate()
+        exc.stdout = captured_stdout
+        exc.stderr = captured_stderr
+        raise
+
+    completed = subprocess.CompletedProcess(
+        cmd,
+        process.returncode,
+        stdout=captured_stdout,
+        stderr=captured_stderr,
+    )
+    if check:
+        completed.check_returncode()
+    return completed
 
 
 def _audio_source_path(uri: str) -> Path:
@@ -245,7 +298,7 @@ def invoke_remotion_render(
 
     Returns metadata dict on success. Raises RenderError on failure.
     """
-    runner = runner or subprocess.run
+    runner = runner or _run_subprocess_tree
     render_js = project_dir / "render.mjs"
     if not render_js.exists():
         raise RenderError(f"missing render entry: {render_js}")

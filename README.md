@@ -95,7 +95,7 @@ HTTPSを自動設定する。詳細は `docs/deployment-lightsail.md` を参照�
 - プロジェクト: `remotion/`（Composition `Webinar` + `render.mjs`）
 - パイプライン Step 6 は `VideoRenderer` が Remotion を invoke
 - 本番経路はRemotion失敗時にfail-closedとし、映像・音声ストリームと尺のprobeに合格したMP4だけを公開可能にする。`renderer=double`は明示的なテストモード専用で、`publishable=false`として扱う
-- 2 vCPUデモ環境では`concurrency=1`とH.264 `veryfast` presetを使い、15分のworker timeout内で進捗を5%刻みで記録する
+- 2 vCPUデモ環境では`concurrency=1`とH.264 `veryfast` presetを使い、15分のworker timeout内でtimeout診断用の進捗を5%刻みで出力する
 - アダプタ境界はユニットテストで runner を差し替えて検証
 
 ```bash
