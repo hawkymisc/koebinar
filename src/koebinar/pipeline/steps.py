@@ -104,7 +104,18 @@ class GenerationSteps:
         messages = [
             {
                 "role": "system",
-                "content": "Generate Remotion slide props JSON from outline. JSON only.",
+                "content": (
+                    "Generate concise, presentation-ready slide data from the outline. "
+                    "Respond with JSON only, using exactly this renderable contract: "
+                    '{"slides":[{"title":"string","subtitle":"string (optional)",'
+                    '"layout":"title_bullets|split|cards|timeline",'
+                    '"bullets":["string"],"body":"string (optional)",'
+                    '"visual":{"type":"cards|flow|metrics","items":'
+                    '[{"title":"string","description":"string (optional)",'
+                    '"label":"string (optional)","value":"string (optional)"}]}}]}. '
+                    "Use only fields needed by each slide. Keep bullets to six or fewer and visual items to four or fewer. "
+                    "Do not emit CSS, animation instructions, placeholder-only media, or markdown fences."
+                ),
             },
             {
                 "role": "user",
