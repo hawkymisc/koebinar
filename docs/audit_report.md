@@ -3,11 +3,11 @@
 | 項目 | 内容 |
 |---|---|
 | 監査日 | 2026-08-15 |
-| 基準コミット | `11f73a5`（`origin/main`）+ `fix/elevenlabs-key-validation` 作業差分 |
+| 基準コミット | `908b93e`（`origin/main`）+ `fix/elevenlabs-voice-selection` 作業差分 |
 | 対象 | `README.md`、`docs/`、API、Worker、Web UI、Remotion、テスト、Compose設定 |
 | 判定 | **部分整合**。Issue #12〜14の変更範囲はClean。リポジトリ全体には既報の未解消不整合が残る |
-| 未解消 | Critical 0件 / High 3件 / Medium 7件 / Low 3件（計13件） |
-| 解消済み | Critical 3件（A-001、A-002、A-005） |
+| 未解消 | Critical 0件 / High 2件 / Medium 7件 / Low 3件（計12件） |
+| 解消済み | Critical 3件（A-001、A-002、A-005）/ High 1件（A-004） |
 
 ## 1. 文書の位置づけ
 
@@ -30,13 +30,13 @@
 
 | 検証 | 結果 | 証明する範囲 |
 |---|---|---|
-| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **303 passed**、225 warnings、分岐込み **90.38%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
-| `cd web && npm test` | **23 passed** | APIクライアント、認証UI、キー接頭辞、権限ヒント、Voice同意、ファイル抽出の単体契約 |
+| `.venv/bin/pytest tests -q --cov=koebinar --cov-branch --cov-report=term` | **328 passed**、230 warnings、分岐込み **90.21%** | Pythonの単体・API・モックE2E。実プロバイダーの音声品質は対象外 |
+| `cd web && npm test` | **26 passed** | APIクライアント、認証UI、キー接頭辞、権限ヒント、Voice同意・選択、ファイル抽出の単体契約 |
 | `cd web && npm run build` | **pass** | TypeScript型検査とVite本番ビルド |
 | `cd web && npm run lint` | **pass** | Oxlint静的検査 |
 | `cd web && npm run test:e2e` | **1 passed** | 実Remotionによる1920×1080 H.264映像のブラウザ再生、公開導線、Q&Aを再検証 |
 
-Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に225件のwarningが出た（既報A-016）。
+Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` を中心に230件のwarningが出た（既報A-016）。
 
 ### 2.1 Issue #12〜14 差分監査
 
@@ -58,7 +58,7 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 | OrcaRouterの現行ルーターIDと一致 | 既定値・モック・production exampleを`orcarouter/auto`へ統一 | 実APIモデル一覧で`adaptive`なし・`orcarouter/auto`あり、全Chatモックでmodel IDを検証 | Clean |
 | OrcaRouter修正後の要件・仕様・運用コンソール文書との整合 | requirements/specificationをv1.13、tenant-auth-consoleをv1.5へ更新 | 実装・テスト・関連文書を相互照合 | Clean |
 
-今回の変更範囲で新たな未記録不整合は検出しなかった。第5章の13件は既存監査で追跡中のため、今回スコープのClean判定には混在させない。
+今回の変更範囲で新たな未記録不整合は検出しなかった。第5章の12件は既存監査で追跡中のため、今回スコープのClean判定には混在させない。
 
 ## 3. 整合を確認できた主な契約
 
@@ -76,7 +76,7 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 | PDF/PPTXをブラウザ内で抽出し、本文だけ登録 | `fileExtraction.ts` / `WebinarListPage.tsx` | `fileExtraction.test.ts` / Playwright | 整合 |
 | 根拠不足時の回答保留と引用の所属検査 | `QAService` / `gate_answer` | Q&A unit/API tests | 整合 |
 
-## 4. 解消済みのCritical指摘
+## 4. 解消済みの指摘
 
 ### A-001 — Resolved — Remotion動画にナレーション音声が合成されない
 
@@ -99,6 +99,13 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 - キー差替え: 同一テナント・同一provider Voice IDなら同意対象は変わらないため証跡を維持し、active integrationだけを再関連付けする。キー削除時は関連Voiceを無効化する。
 - 検証: `test_voice_consent.py`と`voice-consent.test.ts`が一覧取得、明示同意、取消、テナント境界、旧推定フラグのfail-closed移行、キー差替えを回帰検証する。
 
+### A-004 — Resolved — ElevenLabs Voice一覧とウェビナーのVoice選択が接続されていない
+
+- 実装: 作成画面と既存ウェビナー詳細画面は、テナントへ同期済みでactiveかつ`usable`なVoiceだけを選択肢として表示する。`POST /webinars`は実在する`voice_id`を必須とし、存在しない疑似ID`default`を拒否する。
+- 修復経路: 作成前・失敗・途中状態の既存ウェビナーは`PATCH /webinars/{id}/voice`でVoiceを変更できる。変更保存後に`audio`から再実行でき、queued/running中と完成済みの変更は409で拒否し、生成済み動画を保持する。
+- 再試行: ElevenLabsの404等の恒久的4xxは再送せず、429・5xx・通信障害だけを制限付きで再試行する。
+- 検証: `test_elevenlabs_voice_selection.py`と`VoiceSelect.test.tsx`が疑似ID拒否、API変更、実在Voiceだけの表示、404非再試行を回帰検証する。
+
 ## 5. 未解消の不整合
 
 ### A-003 — High — 台本の事前承認ゲートがない
@@ -108,14 +115,6 @@ Pythonテストは成功したが、SQLite接続未解放の `ResourceWarning` �
 - テスト: 台本編集テストも、いったん全工程を完了した後にpatchしてTTS以降を再実行する。
 - 影響: 未確認の台本が外部TTSへ送信され、コスト消費と不適切な動画生成が発生しうる。
 - 解消条件: Script完了時に`awaiting_approval`へ停止し、明示承認後にTTSへ進む。現行方式を採用するならBR-03/FR-005の合意変更が必要。
-
-### A-004 — High — ElevenLabs Voice一覧とウェビナーのVoice選択が接続されていない
-
-- 要件・仕様: BR-01/BR-04、FR-006bは、登録アカウントのVoice一覧から使用Voiceを選べることを要求する。
-- 実装: 連携設定画面ではVoiceの同期・同意記録・取消ができ、APIは所属・有効性・同意を検証する。一方、ウェビナー作成画面にはVoice選択欄がなく、既定値`voice_id="default"`が送られる。
-- テスト: API側のVoice検証は`test_voice_consent.py`で確認できるが、UIで同期済みVoiceを選んで作成する経路は存在せず、E2Eもない。
-- 影響: 通常のUI操作ではクローンVoiceを指定できず、日英同一Voiceの受入条件を満たせない。
-- 解消条件: 同意済みかつ利用可能なVoiceだけを作成フォームへ表示し、選択値を送信するUIとE2Eを追加する。
 
 ### A-006 — High — 本番Composeが転送元を無条件に信頼する
 

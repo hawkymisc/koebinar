@@ -3,6 +3,7 @@ import { setToken } from './client'
 import {
   attestElevenLabsVoice,
   listElevenLabsVoices,
+  patchWebinarVoice,
   revokeElevenLabsVoiceConsent,
 } from './endpoints'
 
@@ -76,5 +77,17 @@ describe('voice consent API', () => {
     ;[url, options] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(String(url)).toContain('/voices/voice_clone%2Fja/consent')
     expect(options.method).toBe('DELETE')
+  })
+
+  it('patches an existing webinar with the selected provider Voice', async () => {
+    setToken('acme-token')
+    mockFetch({ id: 'web-1', voice_id: 'voice_clone/ja' })
+
+    await patchWebinarVoice('web-1', 'voice_clone/ja')
+
+    const [url, options] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(String(url)).toContain('/webinars/web-1/voice')
+    expect(options.method).toBe('PATCH')
+    expect(options.body).toBe(JSON.stringify({ voice_id: 'voice_clone/ja' }))
   })
 })

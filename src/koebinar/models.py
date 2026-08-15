@@ -71,11 +71,6 @@ class Provider(str, Enum):
     ELEVENLABS = "elevenlabs"
 
 
-# Reserved pseudo-voice used by the existing system-key/demo fallback path. It
-# is not a provider Voice and therefore has no tenant consent record to collect.
-SYSTEM_FALLBACK_VOICE_ID = "default"
-
-
 class IntegrationStatus(str, Enum):
     ACTIVE = "active"
     INVALID = "invalid"
@@ -186,7 +181,7 @@ class WebinarCreateRequest(BaseModel):
     lang: Lang = Lang.JA
     template: Template = Template.TECH
     style: Style = Style.KEYNOTE
-    voice_id: str = "default"
+    voice_id: str
     instructions: str = ""
     document_ids: list[str] = Field(default_factory=list)
     auto_run: bool = True
@@ -232,6 +227,10 @@ class Webinar(BaseModel):
 
 class ScriptPatchRequest(BaseModel):
     slides: list[dict[str, Any]]
+
+
+class WebinarVoicePatchRequest(BaseModel):
+    voice_id: str
 
 
 class PublicationPatchRequest(BaseModel):

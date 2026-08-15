@@ -100,6 +100,13 @@ export function patchScript(id: string, slides: ScriptSlide[]): Promise<Webinar>
   return apiRequest<Webinar>(`/webinars/${id}/script`, { method: 'PATCH', body: { slides } })
 }
 
+export function patchWebinarVoice(id: string, voiceId: string): Promise<Webinar> {
+  return apiRequest<Webinar>(`/webinars/${id}/voice`, {
+    method: 'PATCH',
+    body: { voice_id: voiceId },
+  })
+}
+
 export function runStep(id: string, step: string, sync?: boolean): Promise<Webinar> {
   const qs = sync === undefined ? '' : `?sync=${sync}`
   return apiRequest<Webinar>(`/webinars/${id}/steps/${step}/run${qs}`, { method: 'POST' })

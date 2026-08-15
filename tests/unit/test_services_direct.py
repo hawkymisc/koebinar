@@ -22,7 +22,7 @@ from koebinar.models import (
 from koebinar.pipeline.orchestrator import PipelineOrchestrator
 from koebinar.qa.service import QAService
 from koebinar.storage import Store
-from tests.helpers import sync_and_attest
+from tests.helpers import CLONE_VOICE_ID, seed_attested_voice_ref, sync_and_attest
 from tests.mocks.providers import (
     FREE_EL_KEY,
     INVALID_EL_KEY,
@@ -304,8 +304,11 @@ def test_pipeline_full_ja(svc_env):
 def test_pipeline_fails_without_keys(svc_env):
     settings, store, client = svc_env
     orch = PipelineOrchestrator(store=store, settings=settings, http_client=client)
+    seed_attested_voice_ref(store, CLONE_VOICE_ID)
     with pytest.raises(Exception):
-        orch.create_webinar(WebinarCreateRequest(theme="x", auto_run=True))
+        orch.create_webinar(
+            WebinarCreateRequest(theme="x", voice_id=CLONE_VOICE_ID, auto_run=True)
+        )
 
 
 def test_qa_rejects_citations_not_present_in_retrieval(svc_env):

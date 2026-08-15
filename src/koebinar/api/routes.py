@@ -24,6 +24,7 @@ from koebinar.models import (
     VoiceConsentRequest,
     WebinarCreateRequest,
     WebinarStatus,
+    WebinarVoicePatchRequest,
 )
 from koebinar.pipeline.orchestrator import PipelineError
 
@@ -121,6 +122,18 @@ def build_router() -> APIRouter:
             w = state.pipeline.patch_script(webinar_id, body)
         except PipelineError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return w.model_dump(mode="json")
+
+    @router.patch("/webinars/{webinar_id}/voice", dependencies=[Depends(require_auth)])
+    def patch_voice(
+        webinar_id: str, body: WebinarVoicePatchRequest, request: Request
+    ) -> dict[str, Any]:
+        state = get_tenant_services(request)
+        try:
+            w = state.pipeline.patch_voice(webinar_id, body)
+        except (PipelineError, IntegrationError) as exc:
+            code = getattr(exc, "status_code", 400)
+            raise HTTPException(status_code=code, detail=str(exc)) from exc
         return w.model_dump(mode="json")
 
     @router.post("/webinars/{webinar_id}/steps/{step}/run", dependencies=[Depends(require_auth)])

@@ -33,6 +33,7 @@ from koebinar.pipeline.pronunciation import apply_pronunciation, load_pronunciat
 from koebinar.pipeline.renderer import remotion_available
 from koebinar.pipeline.steps import GenerationSteps
 from koebinar.pipeline.timeline import build_timeline
+from tests.helpers import seed_attested_voice_ref
 from koebinar.pipeline.tts import TTSAdapter
 from koebinar.qa.confidence import gate_answer
 from koebinar.qa.service import QAService
@@ -225,7 +226,10 @@ def test_orchestrator_integration_error_path(settings: Settings, store: Store):
     orch = PipelineOrchestrator(store=store, settings=settings, http_client=httpx.Client())
     from koebinar.models import WebinarCreateRequest
 
-    w = orch.create_webinar(WebinarCreateRequest(theme="x", auto_run=False))
+    seed_attested_voice_ref(store, "voice-branch")
+    w = orch.create_webinar(
+        WebinarCreateRequest(theme="x", voice_id="voice-branch", auto_run=False)
+    )
     with pytest.raises((PipelineError, IntegrationError, Exception)):
         orch.run_from(w.id, "outline")  # no keys → IntegrationError
     orch.http_client.close()

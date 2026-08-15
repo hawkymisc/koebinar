@@ -821,6 +821,28 @@
   gap: 8px;
 }
 
+.voice-picker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.voice-picker-row .btn {
+  margin-bottom: 1px;
+}
+
+.error-text {
+  color: var(--danger);
+}
+
+@media (max-width: 640px) {
+  .voice-picker-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .slide-editor {
   display: flex;
   flex-direction: column;

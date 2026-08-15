@@ -31,6 +31,7 @@ from koebinar.pipeline.renderer import (
     remotion_available,
     remotion_project_ready,
 )
+from tests.helpers import seed_attested_voice_ref
 from koebinar.storage import Store, get_store, open_store, reset_store, set_store
 from koebinar.worker import _handle_signal, main as worker_main, process_one, run_worker
 from tests.helpers import CLONE_VOICE_ID, attest_voice, sync_and_attest
@@ -229,7 +230,10 @@ def test_orchestrator_enqueue_invalid_step(durable):
     s, st = durable
     with install_mocks():
         orch = PipelineOrchestrator(store=st, settings=s, http_client=httpx.Client())
-        w = orch.create_webinar(WebinarCreateRequest(theme="x", auto_run=False))
+        seed_attested_voice_ref(st, "voice-queue")
+        w = orch.create_webinar(
+            WebinarCreateRequest(theme="x", voice_id="voice-queue", auto_run=False)
+        )
         with pytest.raises(PipelineError):
             orch.enqueue_from(w.id, "not_a_step")
 

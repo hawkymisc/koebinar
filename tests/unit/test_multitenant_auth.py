@@ -11,7 +11,7 @@ from koebinar.config import Settings
 from koebinar.main import create_app
 from koebinar.models import VOICE_ATTESTATION_VERSION
 from koebinar.storage import Store
-from tests.helpers import CLONE_VOICE_ID
+from tests.helpers import CLONE_VOICE_ID, seed_attested_voice_ref
 from tests.mocks.providers import VALID_EL_KEY, VALID_ORCA_KEY
 
 
@@ -63,7 +63,8 @@ def test_login_and_session_resolve_the_configured_tenant(settings, mock_provider
 
 
 def test_documents_and_webinars_are_isolated_between_tenants(settings, mock_providers):
-    client, _ = _tenant_client(settings, mock_providers)
+    client, store = _tenant_client(settings, mock_providers)
+    seed_attested_voice_ref(store, "voice-acme", tenant_id="acme")
     with client:
         acme_doc = client.post(
             "/api/v1/knowledge/documents",
@@ -95,6 +96,7 @@ def test_documents_and_webinars_are_isolated_between_tenants(settings, mock_prov
             headers=_headers("acme-secret"),
             json={
                 "theme": "Acme launch",
+                "voice_id": "voice-acme",
                 "document_ids": [acme_doc.json()["id"]],
                 "auto_run": False,
             },
@@ -111,6 +113,7 @@ def test_documents_and_webinars_are_isolated_between_tenants(settings, mock_prov
             headers=_headers("globex-secret"),
             json={
                 "theme": "Must not use Acme data",
+                "voice_id": "voice-acme",
                 "document_ids": [acme_doc.json()["id"]],
                 "auto_run": False,
             },

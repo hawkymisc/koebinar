@@ -1,17 +1,26 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createDocument, createWebinar, listDocuments, listWebinars } from '../api/endpoints'
+import {
+  createDocument,
+  createWebinar,
+  listDocuments,
+  listElevenLabsVoices,
+  listWebinars,
+} from '../api/endpoints'
 import type {
   KnowledgeDocument,
   Lang,
   Style,
   Template,
+  VoiceInfo,
   Webinar,
   WebinarCreateInput,
 } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
 import { ApiError } from '../api/client'
 import { extractKnowledgeFile } from '../features/knowledge/fileExtraction'
+import { VoiceSelect } from '../components/VoiceSelect'
+import { usableVoices } from '../components/voiceOptions'
 
 const EMPTY_FORM: WebinarCreateInput = {
   theme: '',
@@ -20,6 +29,7 @@ const EMPTY_FORM: WebinarCreateInput = {
   lang: 'ja',
   template: 'tech',
   style: 'keynote',
+  voice_id: '',
   instructions: '',
   document_ids: [],
   auto_run: true,
@@ -28,8 +38,10 @@ const EMPTY_FORM: WebinarCreateInput = {
 export function WebinarListPage() {
   const [webinars, setWebinars] = useState<Webinar[]>([])
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
+  const [voices, setVoices] = useState<VoiceInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
   const [form, setForm] = useState<WebinarCreateInput>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -43,6 +55,26 @@ export function WebinarListPage() {
       const [nextWebinars, nextDocuments] = await Promise.all([listWebinars(), listDocuments()])
       setWebinars(nextWebinars)
       setDocuments(nextDocuments)
+      try {
+        const response = await listElevenLabsVoices()
+        const nextVoices = response.voices
+        const available = usableVoices(nextVoices)
+        setVoices(nextVoices)
+        setForm((current) => ({
+          ...current,
+          voice_id: available.some((voice) => voice.voice_id === current.voice_id)
+            ? current.voice_id
+            : (available[0]?.voice_id ?? ''),
+        }))
+        setVoiceError(available.length === 0 ? '利用可能なElevenLabs音声がありません。' : null)
+      } catch (voiceFetchError) {
+        setVoices([])
+        setVoiceError(
+          voiceFetchError instanceof ApiError
+            ? voiceFetchError.message
+            : 'ElevenLabs音声の取得に失敗しました',
+        )
+      }
       setError(null)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'ウェビナー一覧の取得に失敗しました')
@@ -125,12 +157,15 @@ export function WebinarListPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.theme.trim()) return
+    if (!form.theme.trim() || !form.voice_id) {
+      if (!form.voice_id) setVoiceError('生成に使用する音声を選択してください。')
+      return
+    }
     setSubmitting(true)
     setError(null)
     try {
       const created = await createWebinar(form)
-      setForm(EMPTY_FORM)
+      setForm({ ...EMPTY_FORM, voice_id: usableVoices(voices)[0]?.voice_id ?? '' })
       navigate(`/webinars/${created.id}`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'ウェビナーの作成に失敗しました')
@@ -280,7 +315,17 @@ export function WebinarListPage() {
                 <option value="humorous">Humorous</option>
               </select>
             </label>
+            <VoiceSelect
+              id="webinar-voice"
+              voices={voices}
+              value={form.voice_id}
+              onChange={(voiceId) => {
+                setForm({ ...form, voice_id: voiceId })
+                setVoiceError(null)
+              }}
+            />
           </div>
+          {voiceError && <p className="error-box">{voiceError}</p>}
           <label className="field instructions-field">
             追加指示
             <textarea
@@ -300,7 +345,11 @@ export function WebinarListPage() {
               />
               作成後すぐに生成を開始する
             </label>
-            <button className="btn btn-primary" type="submit" disabled={submitting || uploading}>
+            <button
+              className="btn btn-primary"
+              type="submit"
+              disabled={submitting || uploading || !form.voice_id}
+            >
               {submitting ? '作成中…' : '作成'}
             </button>
           </div>

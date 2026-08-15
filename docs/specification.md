@@ -177,7 +177,7 @@ MVPの実装はElevenLabsのみだが、interfaceは維持し将来のエンジ�
 - **検証エラー契約**: 必須のVoice一覧検証で発生した401/403/429/5xxや通信失敗は、原因別detail（キー無効・期限切れ/Voices Read・IP allowlist/レート制限/一時障害/接続失敗）を持つ422へ正規化する。ElevenLabsのJSON応答は構造化された`detail.status/code/type`、`detail.message`、`detail.request_id`だけを抽出し、キー全文を`[redacted]`へ置換して各フィールドの長さを制限する。非構造化本文は表示しない。接続検証では安全化したcode/messageを画面へ表示し、TTS失敗では同じ安全化済み理由をウェビナー/ジョブのエラーへ記録する。KoebinarのBearer認証401とは区別し、ブラウザのログインセッションを維持する。検証失敗時は既存integrationを作成・更新しない。
 - **プラン警告**: User Readがある場合はproviderから取得したtierと使用量を表示する。権限がない場合または任意照会が一時失敗した場合は、接続を妨げず取得不能の警告を表示する。公開・商用利用・クレジット表記等の条件は利用時点の契約と規約を確認するよう案内し、Free tierと判定できた登録は確認の上でのみ許可する。
 - **保存**: キーはアプリ層で暗号化（マスターキーは環境変数管理）してDB保存。復号はTTS呼び出し直前のサーバー側処理のみ。APIレスポンス・UI・ログには`sk_...`末尾4桁のマスクのみ。
-- **Voice同期・選択**: 登録キーで`GET /v1/voices`を呼び、Voice一覧（クローンVoice含む）をテナントスコープで同期する。一覧取得は同意を付与しない。運用者が動画生成に使うvoice_idを選択し、APIは現在テナントの有効かつ利用可能なVoiceかを検証する（作成UIの未実装差分は監査A-004）。
+- **Voice同期・選択**: 登録キーで`GET /v1/voices`を呼び、Voice一覧（クローンVoice含む）をテナントスコープで同期する。一覧取得は同意を付与しない。作成画面と既存ウェビナーの詳細画面には、現在テナントでactiveかつ`usable`なVoiceだけを表示する。`POST /webinars`は実在する`voice_id`を必須とし、疑似ID`default`を許可しない。作成前・失敗・途中状態の既存ウェビナーはVoiceを変更できる。生成中および完成済みウェビナーのVoice設定と生成済み成果物は変更しない。
 - **削除/差替え**: キー削除時は該当integrationのvoice_refsを無効化する。キー差替え後に同一テナント・同一provider Voice IDが再同期された場合は、同意対象が変わらないため有効な証跡を維持し、新しいintegrationへ関連付ける。生成済み音声・動画は保持する。
 - **フォールバック**: BYOK未登録の場合、構成フラグ `ALLOW_SYSTEM_TTS_KEY=true` のときのみシステムキーで生成可能（デモ・開発用。生成物に「デモ用共有アカウント」フラグを付与）。OrcaRouter側は `ALLOW_SYSTEM_LLM_KEY` で同様に制御する。
 - **推奨案内**: 入力欄直下にElevenLabsは`sk_`、OrcaRouterは`sk-`から始まることを常時表示する。キーボード操作可能な`[i]`ヒントには、接続確認で必須の`GET /v1/voices`（Voices Read）、プラン・使用量表示に任意の`GET /v1/user/subscription`（User Read / `user_read`）、生成の`POST /v1/text-to-speech/{voice_id}`（Text to Speech）、有効期限・IP allowlist・スコープ制限・クレジット上限、Freeプラン確認欄との関係を表示する。ヒントはモバイルviewport外へはみ出さない。
@@ -244,11 +244,12 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 | GET | /api/v1/integrations/elevenlabs/voices | ElevenLabs登録キーのアカウントのVoice一覧取得 |
 | POST | /api/v1/integrations/elevenlabs/voices/{voice_id}/consent | クローン/custom Voiceの明示的な利用同意証跡を記録 |
 | DELETE | /api/v1/integrations/elevenlabs/voices/{voice_id}/consent | Voiceの利用同意証跡を取り消し、以後の生成を拒否 |
+| PATCH | /api/v1/webinars/{id}/voice | 作成前・失敗・途中状態の既存ウェビナーへ利用可能なvoice_idを設定し、再実行前の音声選択を修正 |
 | POST | /api/v1/questions | 運用者用の質問作成（簡易トークン必須） |
 | GET | /api/v1/questions/{id} | 運用者用の回答取得（簡易トークン必須） |
 | GET | /api/v1/analytics/questions | 質問・Intent一覧、CSV/JSONエクスポート |
 
-`POST /api/v1/webinars` はv1.6で`instructions`（任意, string）を受け付ける。`document_ids`は明示的に選択したもののみを渡す（未指定/空配列＝KB根拠なしで生成、3.2参照）。視聴者ページは完成後の明示的な公開操作を必須とし、公開APIからはvoice_id、instructions、document_ids、script、artifacts等の運用情報を返さない。
+`POST /api/v1/webinars` は`voice_id`（必須, string）と、v1.6で追加した`instructions`（任意, string）を受け付ける。`voice_id`は現在テナントへ同期済みでactiveかつ利用可能なElevenLabs Voiceでなければ作成を拒否する。`document_ids`は明示的に選択したもののみを渡す（未指定/空配列＝KB根拠なしで生成、3.2参照）。視聴者ページは完成後の明示的な公開操作を必須とし、公開APIからはvoice_id、instructions、document_ids、script、artifacts等の運用情報を返さない。
 
 ## 9. データモデル
 

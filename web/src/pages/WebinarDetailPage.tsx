@@ -1,17 +1,22 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
   fetchVideoObjectUrl,
   getWebinar,
+  listElevenLabsVoices,
+  patchWebinarVoice,
   patchScript,
   patchPublication,
   runStep,
 } from '../api/endpoints'
-import { PIPELINE_STEPS, type ScriptSlide, type Webinar } from '../api/types'
+import { PIPELINE_STEPS, type ScriptSlide, type VoiceInfo, type Webinar } from '../api/types'
 import { StatusBadge } from '../components/StatusBadge'
+import { VoiceSelect } from '../components/VoiceSelect'
+import { usableVoices } from '../components/voiceOptions'
 
 const IN_FLIGHT_STATUSES = new Set(['queued', 'running'])
+const VOICE_EDITABLE_STATUSES = new Set(['created', 'failed', 'partial'])
 const POLL_INTERVAL_MS = 2000
 
 export function WebinarDetailPage() {
@@ -24,6 +29,12 @@ export function WebinarDetailPage() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [updatingPublication, setUpdatingPublication] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [voices, setVoices] = useState<VoiceInfo[]>([])
+  const [selectedVoiceId, setSelectedVoiceId] = useState('')
+  const [updatingVoice, setUpdatingVoice] = useState(false)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+  const [voiceMessage, setVoiceMessage] = useState<string | null>(null)
+  const voiceSelectionInitialized = useRef(false)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -40,6 +51,36 @@ export function WebinarDetailPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    let active = true
+    void listElevenLabsVoices()
+      .then((response) => {
+        if (!active) return
+        const available = usableVoices(response.voices)
+        setVoices(response.voices)
+        setVoiceError(available.length === 0 ? '利用可能なElevenLabs音声がありません。' : null)
+      })
+      .catch((err) => {
+        if (!active) return
+        setVoiceError(err instanceof ApiError ? err.message : 'ElevenLabs音声の取得に失敗しました')
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!webinar || voiceSelectionInitialized.current) return
+    const available = usableVoices(voices)
+    if (available.length === 0) return
+    setSelectedVoiceId(
+      available.some((voice) => voice.voice_id === webinar.voice_id)
+        ? webinar.voice_id
+        : available[0].voice_id,
+    )
+    voiceSelectionInitialized.current = true
+  }, [voices, webinar])
 
   useEffect(() => {
     if (!webinar || !IN_FLIGHT_STATUSES.has(webinar.status)) return
@@ -87,6 +128,23 @@ export function WebinarDetailPage() {
     }
   }
 
+  async function handleVoiceUpdate() {
+    if (!id || !selectedVoiceId) return
+    setUpdatingVoice(true)
+    setVoiceMessage(null)
+    try {
+      const updated = await patchWebinarVoice(id, selectedVoiceId)
+      setWebinar(updated)
+      setError(null)
+      setVoiceError(null)
+      setVoiceMessage('音声を変更しました。audioステップから再実行できます。')
+    } catch (err) {
+      setVoiceError(err instanceof ApiError ? err.message : '音声の変更に失敗しました')
+    } finally {
+      setUpdatingVoice(false)
+    }
+  }
+
   async function handlePublication(published: boolean) {
     if (!id) return
     setUpdatingPublication(true)
@@ -114,6 +172,10 @@ export function WebinarDetailPage() {
   if (!webinar) {
     return <p className="muted">読み込み中…</p>
   }
+  const currentVoiceUsable = usableVoices(voices).some(
+    (voice) => voice.voice_id === webinar.voice_id,
+  )
+  const voiceEditable = VOICE_EDITABLE_STATUSES.has(webinar.status)
 
   return (
     <div>
@@ -129,13 +191,55 @@ export function WebinarDetailPage() {
         {webinar.error && <p className="error-box">{webinar.error}</p>}
         {error && <p className="error-box">{error}</p>}
 
+        <h3>ナレーション音声</h3>
+        <div className="voice-picker-row">
+          <VoiceSelect
+            id="webinar-detail-voice"
+            voices={voices}
+            value={selectedVoiceId}
+            disabled={updatingVoice || !voiceEditable}
+            onChange={(voiceId) => {
+              setSelectedVoiceId(voiceId)
+              setVoiceError(null)
+              setVoiceMessage(null)
+            }}
+          />
+          <button
+            className="btn btn-sm"
+            type="button"
+            disabled={
+              updatingVoice
+              || !voiceEditable
+              || !selectedVoiceId
+              || selectedVoiceId === webinar.voice_id
+            }
+            onClick={() => void handleVoiceUpdate()}
+          >
+            {updatingVoice ? '変更中…' : '音声を変更'}
+          </button>
+        </div>
+        {voices.length > 0 && !currentVoiceUsable && (
+          <p className="error-box">
+            {voiceEditable
+              ? '現在の音声はElevenLabsで利用できません。候補を選んで「音声を変更」を押してください。'
+              : 'この完成済み動画で使用した音声は現在ElevenLabsで利用できません。生成済み動画は変更されません。'}
+          </p>
+        )}
+        {voiceError && <p className="error-box">{voiceError}</p>}
+        {voiceMessage && <p className="success-box">{voiceMessage}</p>}
+
         <h3>ステップ再実行</h3>
         <div className="step-list">
           {PIPELINE_STEPS.map((step) => (
             <button
               key={step}
               className="btn btn-sm"
-              disabled={runningStep !== null || IN_FLIGHT_STATUSES.has(webinar.status)}
+              disabled={
+                runningStep !== null
+                || IN_FLIGHT_STATUSES.has(webinar.status)
+                || !currentVoiceUsable
+                || selectedVoiceId !== webinar.voice_id
+              }
               onClick={() => void handleRunStep(step)}
             >
               {runningStep === step ? '実行中…' : step}
