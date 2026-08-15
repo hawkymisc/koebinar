@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import math
 from typing import Any, Optional
 
 from koebinar.config import Settings, get_settings
@@ -23,6 +25,9 @@ from koebinar.models import (
 )
 from koebinar.qa.confidence import classify_intent, gate_answer, score_from_retrieval
 from koebinar.storage import Store, get_store
+
+
+logger = logging.getLogger(__name__)
 
 
 class QAService:
@@ -48,6 +53,10 @@ class QAService:
         self.http_client = http_client
 
     def ask(self, req: QuestionCreateRequest) -> Question:
+        question = self.submit(req)
+        return self.answer_pending(question.id)
+
+    def submit(self, req: QuestionCreateRequest) -> Question:
         webinar = self.store.webinars.get(req.webinar_id)
         if webinar is None or webinar.tenant_id != self.tenant_id:
             raise ValueError("webinar not found")
@@ -59,6 +68,17 @@ class QAService:
             message=req.message,
         )
         self.store.questions[qid] = question
+        return question
+
+    def answer_pending(self, question_id: str) -> Question:
+        question = self.get(question_id)
+        if question is None:
+            raise ValueError("question not found")
+        if question.status != QuestionStatus.PENDING:
+            return question
+        webinar = self.store.webinars.get(question.webinar_id)
+        if webinar is None or webinar.tenant_id != self.tenant_id:
+            raise ValueError("webinar not found")
         try:
             answer = self._answer(question, webinar)
             question.answer = answer
@@ -72,23 +92,29 @@ class QAService:
                 sig = IntentSignal(
                     id=generate_id("intentsig_"),
                     tenant_id=self.tenant_id,
-                    question_id=qid,
+                    question_id=question.id,
                     type=str(answer.intent.get("type", "general")),
                     value=str(answer.intent.get("value", "")),
                     confidence=float(answer.intent.get("confidence") or 0.0),
                 )
                 self.store.intent_signals.append(sig)
         except Exception as exc:
+            logger.warning(
+                "qa answer failed question_id=%s webinar_id=%s error_type=%s",
+                question.id,
+                question.webinar_id,
+                type(exc).__name__,
+            )
             question.status = QuestionStatus.FAILED
             question.answer = Answer(
                 id=generate_id("ans_"),
                 tenant_id=self.tenant_id,
-                question_id=qid,
+                question_id=question.id,
                 text=str(exc),
                 confidence=0.0,
                 answerability=Answerability.INSUFFICIENT,
             )
-        self.store.questions[qid] = question
+        self.store.questions[question.id] = question
         return question
 
     def get(self, question_id: str) -> Optional[Question]:
@@ -175,7 +201,7 @@ class QAService:
         context = [{"document_id": c.document_id, "chunk_id": c.chunk_id, "score": c.score, "text": next(ch.text for ch, s in hits if ch.id == c.chunk_id)} for c in citations]
         llm_answer = self._llm_answer(question.message, context, lang)
         raw_text = str(llm_answer.get("answer_text") or llm_answer.get("answer") or "")
-        raw_conf = float(llm_answer.get("confidence") if llm_answer.get("confidence") is not None else retrieval_conf)
+        raw_conf = self._normalize_confidence(llm_answer.get("confidence"), retrieval_conf)
         retrieved_citations = {(c.document_id, c.chunk_id): c for c in citations}
         claimed_citations = llm_answer.get("citations")
         if claimed_citations is None:
@@ -205,7 +231,7 @@ class QAService:
             confidence=conf,
             answerability=ability,
             citations=cites,
-            intent=llm_answer.get("intent") or intent,
+            intent=self._normalize_intent(llm_answer.get("intent"), intent),
             model_id=self.settings.llm_model,
             prompt_version=self.settings.prompt_version,
         )
@@ -217,6 +243,7 @@ class QAService:
             base_url=self.settings.orcarouter_base_url,
             settings=self.settings,
             client=self.http_client,
+            timeout=self.settings.orcarouter_qa_read_timeout_sec,
         )
         try:
             messages = [
@@ -236,7 +263,7 @@ class QAService:
                 },
             ]
             try:
-                result = client.chat_json(messages)
+                result = client.chat_json(messages, retries=0)
             except LLMError as exc:
                 if exc.status_code == 401:
                     self.integrations.mark_invalid(Provider.ORCAROUTER)
@@ -251,3 +278,46 @@ class QAService:
         finally:
             if self.http_client is None:
                 client.close()
+
+    @staticmethod
+    def _normalize_confidence(value: Any, fallback: float) -> float:
+        try:
+            normalized = float(value) if value is not None else float(fallback)
+        except (TypeError, ValueError):
+            normalized = float(fallback)
+        if not math.isfinite(normalized):
+            normalized = float(fallback)
+        return max(0.0, min(1.0, normalized))
+
+    @staticmethod
+    def _normalize_intent(value: Any, fallback: dict[str, Any]) -> dict[str, Any]:
+        fallback_type = str(fallback.get("type") or "general")[:100]
+        fallback_value = str(fallback.get("value") or fallback_type)[:200]
+        fallback_confidence = QAService._normalize_confidence(
+            fallback.get("confidence"), 0.0
+        )
+        if isinstance(value, str):
+            intent_type = " ".join(value.split())[:100]
+            if intent_type:
+                return {
+                    "type": intent_type,
+                    "value": intent_type,
+                    "confidence": fallback_confidence,
+                }
+        if isinstance(value, dict):
+            intent_type = " ".join(str(value.get("type") or fallback_type).split())[:100]
+            intent_value = " ".join(
+                str(value.get("value") or intent_type or fallback_value).split()
+            )[:200]
+            return {
+                "type": intent_type or fallback_type,
+                "value": intent_value or fallback_value,
+                "confidence": QAService._normalize_confidence(
+                    value.get("confidence"), fallback_confidence
+                ),
+            }
+        return {
+            "type": fallback_type,
+            "value": fallback_value,
+            "confidence": fallback_confidence,
+        }

@@ -265,14 +265,15 @@ def test_public_questions_are_rate_limited(client: TestClient, store: Store, set
     store.webinars[webinar.id] = webinar
     app_state = client.app.state.koebinar
     app_state.settings.public_qa_rate_limit = 2
-    app_state.qa.ask = Mock(
+    app_state.qa.submit = Mock(
         side_effect=lambda req: Question(
             id=f"q_{req.message}",
             webinar_id=req.webinar_id,
             message=req.message,
-            status=QuestionStatus.HELD,
+            status=QuestionStatus.PENDING,
         )
     )
+    app_state.qa.answer_pending = Mock()
 
     endpoint = f"/api/v1/public/webinars/{webinar.id}/questions"
     assert client.post(endpoint, json={"message": "one"}).status_code == 200
@@ -280,7 +281,46 @@ def test_public_questions_are_rate_limited(client: TestClient, store: Store, set
     limited = client.post(endpoint, json={"message": "three"})
     assert limited.status_code == 429
     assert limited.headers["retry-after"] == str(settings.public_qa_rate_window_sec)
-    assert app_state.qa.ask.call_count == 2
+    assert app_state.qa.submit.call_count == 2
+    assert app_state.qa.answer_pending.call_count == 2
+
+
+def test_public_question_returns_pending_then_answers_in_background(
+    client: TestClient, store: Store, settings
+):
+    webinar = _completed_webinar(
+        store,
+        settings.artifacts_dir / "async-question-viewer.mp4",
+        webinar_id="web_async_question",
+    )
+    webinar.published_at = webinar.created_at
+    store.webinars[webinar.id] = webinar
+    app_state = client.app.state.koebinar
+    app_state.qa._answer = Mock(
+        side_effect=lambda question, _webinar: Answer(
+            id="ans_async",
+            question_id=question.id,
+            text="ブラウザで利用できます。",
+            confidence=0.91,
+            answerability=Answerability.ANSWERABLE,
+            citations=[],
+        )
+    )
+
+    response = client.post(
+        f"/api/v1/public/webinars/{webinar.id}/questions",
+        json={"message": "対応環境は？"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+    assert response.json()["answer"] is None
+    completed = client.get(
+        f"/api/v1/public/webinars/{webinar.id}/questions/{response.json()['id']}"
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "answered"
+    assert completed.json()["answer"]["text"] == "ブラウザで利用できます。"
 
 
 def test_editing_or_regenerating_requires_republication(

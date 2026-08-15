@@ -345,3 +345,82 @@ def test_qa_rejects_citations_not_present_in_retrieval(svc_env):
 
     assert answer.answerability == Answerability.INSUFFICIENT
     assert answer.citations == []
+
+
+def test_qa_normalizes_string_intent_from_orcarouter(svc_env):
+    settings, store, client = svc_env
+    knowledge = Mock()
+    knowledge.search.return_value = [
+        (Chunk(id="chunk_allowed", document_id="doc_allowed", text="Grounded evidence"), 0.95)
+    ]
+    qa = QAService(store=store, settings=settings, knowledge=knowledge, http_client=client)
+    qa._llm_answer = Mock(
+        return_value={
+            "answer_text": "Supported answer",
+            "confidence": 0.95,
+            "citations": [
+                {"document_id": "doc_allowed", "chunk_id": "chunk_allowed", "score": 0.95}
+            ],
+            "intent": "explanation",
+        }
+    )
+    webinar = Webinar(
+        id="web_string_intent",
+        theme="Grounding",
+        audience="general",
+        duration_min=5,
+        lang="en",
+        template="tech",
+        style="keynote",
+        voice_id="default",
+        document_ids=["doc_allowed"],
+    )
+
+    answer = qa._answer(
+        Question(id="q_string_intent", webinar_id=webinar.id, message="Explain the evidence"),
+        webinar,
+    )
+
+    assert answer.answerability == Answerability.ANSWERABLE
+    assert answer.intent == {
+        "type": "explanation",
+        "value": "explanation",
+        "confidence": 0.4,
+    }
+
+
+def test_qa_falls_back_when_model_confidence_is_not_numeric(svc_env):
+    settings, store, client = svc_env
+    knowledge = Mock()
+    knowledge.search.return_value = [
+        (Chunk(id="chunk_allowed", document_id="doc_allowed", text="Grounded evidence"), 0.95)
+    ]
+    qa = QAService(store=store, settings=settings, knowledge=knowledge, http_client=client)
+    qa._llm_answer = Mock(
+        return_value={
+            "answer_text": "Supported answer",
+            "confidence": "high",
+            "citations": [
+                {"document_id": "doc_allowed", "chunk_id": "chunk_allowed", "score": 0.95}
+            ],
+        }
+    )
+    webinar = Webinar(
+        id="web_bad_confidence",
+        theme="Grounding",
+        audience="general",
+        duration_min=5,
+        lang="en",
+        template="tech",
+        style="keynote",
+        voice_id="default",
+        document_ids=["doc_allowed"],
+    )
+
+    answer = qa._answer(
+        Question(id="q_bad_confidence", webinar_id=webinar.id, message="Explain the evidence"),
+        webinar,
+    )
+
+    assert answer.answerability == Answerability.ANSWERABLE
+    assert answer.confidence == pytest.approx(0.95)

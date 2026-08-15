@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     orcarouter_connect_timeout_sec: float = 10.0
     orcarouter_models_read_timeout_sec: float = 30.0
     orcarouter_read_timeout_sec: float = 600.0
+    # Public Q&A is interactive and polls asynchronously; fail one attempt in a
+    # bounded window instead of inheriting the long-form generation timeout.
+    orcarouter_qa_read_timeout_sec: float = 60.0
     orcarouter_write_timeout_sec: float = 30.0
     orcarouter_pool_timeout_sec: float = 10.0
     orcarouter_max_retries: int = 1
