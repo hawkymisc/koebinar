@@ -220,6 +220,7 @@ class OrcaRouterClient:
         *,
         model: Optional[str] = None,
         temperature: float = 0.2,
+        retries: int | None = None,
     ) -> dict[str, Any]:
         try:
             data = self.chat_completions(
@@ -227,6 +228,7 @@ class OrcaRouterClient:
                 model=model,
                 temperature=temperature,
                 response_format={"type": "json_object"},
+                retries=retries,
             )
         except LLMError as exc:
             # Anthropic upstreams do not implement response_format. Retry only
@@ -238,6 +240,7 @@ class OrcaRouterClient:
                 model=model,
                 temperature=temperature,
                 response_format=None,
+                retries=retries,
             )
         content = parse_chat_content(data)
         if isinstance(content, dict):

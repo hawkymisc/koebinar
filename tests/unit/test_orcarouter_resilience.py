@@ -247,6 +247,25 @@ def test_json_mode_falls_back_only_when_upstream_does_not_implement_it() -> None
     shared.close()
 
 
+def test_json_mode_can_disable_transport_retries_for_interactive_qa() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadTimeout("slow routed model", request=request)
+
+    settings = Settings(orcarouter_max_retries=2)
+    shared = httpx.Client(transport=httpx.MockTransport(handler))
+    client = OrcaRouterClient("key", settings=settings, client=shared)
+
+    with pytest.raises(LLMError):
+        client.chat_json([{"role": "user", "content": "JSON only"}], retries=0)
+
+    assert attempts == 1
+    shared.close()
+
+
 def test_generation_403_does_not_mark_registered_key_invalid(
     settings: Settings,
     store: Store,

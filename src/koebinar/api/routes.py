@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from koebinar.api.deps import AppState, get_app_state, get_tenant_services, require_auth
@@ -271,7 +271,10 @@ def build_router() -> APIRouter:
 
     @router.post("/public/webinars/{webinar_id}/questions")
     def create_public_question(
-        webinar_id: str, body: ViewerQuestionCreateRequest, request: Request
+        webinar_id: str,
+        body: ViewerQuestionCreateRequest,
+        request: Request,
+        background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
         state, webinar = get_published_webinar(webinar_id, request)
         if not body.message.strip():
@@ -288,11 +291,13 @@ def build_router() -> APIRouter:
                 headers={"Retry-After": str(state.settings.public_qa_rate_window_sec)},
             )
         try:
-            question = state.for_tenant(webinar.tenant_id).qa.ask(
+            qa = state.for_tenant(webinar.tenant_id).qa
+            question = qa.submit(
                 QuestionCreateRequest(webinar_id=webinar_id, message=body.message.strip())
             )
         except IntegrationError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        background_tasks.add_task(qa.answer_pending, question.id)
         return public_question_view(state, webinar, question)
 
     @router.get("/public/webinars/{webinar_id}/questions/{question_id}")
