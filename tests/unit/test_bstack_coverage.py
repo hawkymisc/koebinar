@@ -164,16 +164,24 @@ def test_renderer_missing_entry_and_timeout(tmp_path: Path, durable):
         )
     # timeout
     def slow(*a, **k):
-        raise subprocess.TimeoutExpired(cmd="node", timeout=1)
+        raise subprocess.TimeoutExpired(
+            cmd="node",
+            timeout=1,
+            output='{"phase":"render","progress_percent":45}',
+        )
 
     proj = Path(__file__).resolve().parents[2] / "remotion"
-    with pytest.raises(RenderError):
+    timeout_output = tmp_path / "t.mp4"
+    with pytest.raises(RenderError, match="timed out after 900.0s.*phase=render, progress=45%"):
         invoke_remotion_render(
             project_dir=proj,
             props={"timeline": {}, "slides": []},
-            output_path=tmp_path / "t.mp4",
+            output_path=timeout_output,
+            timeout_sec=900.0,
             runner=slow,
         )
+    assert not timeout_output.exists()
+    assert not list(tmp_path.glob(f".{timeout_output.name}.*"))
     # FileNotFoundError
     def no_node(*a, **k):
         raise FileNotFoundError("node")

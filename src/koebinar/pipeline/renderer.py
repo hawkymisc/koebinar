@@ -233,7 +233,7 @@ def invoke_remotion_render(
     project_dir: Path,
     props: dict[str, Any],
     output_path: Path,
-    timeout_sec: float = 180.0,
+    timeout_sec: float = 900.0,
     runner: Optional[SubprocessRunner] = None,
     public_dir: Optional[Path] = None,
     probe: Optional[MediaProbe] = None,
@@ -284,7 +284,24 @@ def invoke_remotion_render(
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RenderError(f"remotion render timed out after {timeout_sec}s") from exc
+            stdout = exc.stdout or exc.output or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", errors="replace")
+            render_state: dict[str, Any] = {}
+            for line in str(stdout).splitlines():
+                try:
+                    event = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(event, dict) and event.get("phase"):
+                    render_state = event
+            phase = str(render_state.get("phase") or "unknown")
+            progress = render_state.get("progress_percent")
+            progress_suffix = f", progress={progress}%" if isinstance(progress, int) else ""
+            raise RenderError(
+                f"remotion render timed out after {timeout_sec}s "
+                f"(phase={phase}{progress_suffix})"
+            ) from exc
         except FileNotFoundError as exc:
             raise RenderError("node not found for remotion render") from exc
         except Exception as exc:

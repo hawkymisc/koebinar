@@ -80,6 +80,8 @@ async function main() {
     })
   );
 
+  let lastReportedPercent = -5;
+
   await renderMedia({
     composition: {
       ...composition,
@@ -93,7 +95,22 @@ async function main() {
     outputLocation: output,
     inputProps: props,
     concurrency,
+    x264Preset: "veryfast",
     browserExecutable,
+    onProgress: ({ progress, renderedFrames, encodedFrames, stitchStage }) => {
+      const progressPercent = Math.floor(progress * 100);
+      if (progressPercent < lastReportedPercent + 5 && progressPercent !== 100) return;
+      lastReportedPercent = progressPercent;
+      console.log(
+        JSON.stringify({
+          phase: "render",
+          progress_percent: progressPercent,
+          rendered_frames: renderedFrames,
+          encoded_frames: encodedFrames,
+          stitch_stage: stitchStage,
+        }),
+      );
+    },
   });
 
   console.log(JSON.stringify({ phase: "done", output, generator: "koebinar-remotion" }));
