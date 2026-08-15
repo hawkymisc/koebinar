@@ -13,7 +13,6 @@ from koebinar.integrations.errors import IntegrationError
 from koebinar.models import (
     SUPPORTED_ATTESTATION_VERSIONS,
     Provider,
-    SYSTEM_FALLBACK_VOICE_ID,
     VoiceConsentSource,
     VoiceConsentStatus,
     VoiceInfo,
@@ -251,18 +250,6 @@ class VoiceConsentService:
                 "voice_id is required",
                 code="voice_not_registered",
                 status_code=400,
-            )
-        if voice_id == SYSTEM_FALLBACK_VOICE_ID:
-            # Backward-compatible reserved pseudo-voice. The subsequent API-key
-            # resolver still decides whether the system fallback is enabled; this
-            # branch only keeps consent collection scoped to provider Voices.
-            return VoiceRef(
-                tenant_id=self.tenant_id,
-                provider=self.provider,
-                voice_id=SYSTEM_FALLBACK_VOICE_ID,
-                name="System fallback",
-                category="system",
-                consent_status=VoiceConsentStatus.NOT_REQUIRED,
             )
         ref = self._load(voice_id)
         if ref is None:

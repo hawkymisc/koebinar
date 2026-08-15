@@ -13,6 +13,7 @@ from koebinar.integrations.elevenlabs import ElevenLabsError
 from koebinar.pipeline.audio_format import AudioFormatError, detect_audio_format, silence_wav
 from koebinar.pipeline.renderer import VideoRenderer, _probe_errors
 from koebinar.pipeline.tts import TTSAdapter
+from tests.helpers import seed_attested_voice_ref
 
 
 def test_audio_format_is_derived_from_bytes_and_invalid_payloads_are_rejected():
@@ -37,12 +38,13 @@ def test_tts_does_not_persist_an_empty_provider_payload(settings, store):
 
     client = httpx.Client(transport=httpx.MockTransport(respond))
     tts = TTSAdapter(store=store, settings=settings, http_client=client)
+    seed_attested_voice_ref(store, "voice-invalid-audio")
 
     with pytest.raises(ElevenLabsError, match="empty audio payload"):
         tts.synthesize_script(
             "web-invalid-audio",
             {"slides": [{"slide_index": 0, "sentences": ["hello"]}]},
-            "default",
+            "voice-invalid-audio",
             "en",
         )
 

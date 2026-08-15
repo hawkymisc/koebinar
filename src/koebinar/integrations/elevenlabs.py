@@ -172,13 +172,18 @@ class ElevenLabsClient:
                 resp = self._client.post(url, headers=self._headers(), json=payload, params=params)
             except httpx.HTTPError as exc:
                 last_err = ElevenLabsError(f"TTS request failed: {exc}")
-                continue
-            if resp.status_code in (401, 403):
-                raise self._response_error("TTS", resp)
-            if resp.status_code == 429 and attempt < attempts - 1:
+                if attempt >= attempts - 1:
+                    raise last_err from exc
                 continue
             if resp.status_code >= 400:
-                last_err = self._response_error("TTS", resp)
+                error = self._response_error("TTS", resp)
+                # Provider 4xx responses (including voice_not_found) are
+                # request-contract failures. Retrying them spends latency and
+                # quota without changing the outcome; only 429 is transient.
+                retryable = resp.status_code == 429 or resp.status_code >= 500
+                if not retryable or attempt >= attempts - 1:
+                    raise error
+                last_err = error
                 continue
             return resp
         assert last_err is not None

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from tests.helpers import CLONE_VOICE_ID, seed_attested_voice_ref
 from tests.mocks.providers import INVALID_EL_KEY, INVALID_ORCA_KEY, VALID_EL_KEY, VALID_ORCA_KEY
 
 
@@ -46,10 +47,17 @@ def test_knowledge_register_list_get(client: TestClient):
     assert got["title"] == "Spec"
 
 
-def test_webinar_list(client: TestClient):
-    r1 = client.post("/api/v1/webinars", json={"theme": "Webinar A", "auto_run": False})
+def test_webinar_list(client: TestClient, store):
+    seed_attested_voice_ref(store, CLONE_VOICE_ID)
+    r1 = client.post(
+        "/api/v1/webinars",
+        json={"theme": "Webinar A", "voice_id": CLONE_VOICE_ID, "auto_run": False},
+    )
     assert r1.status_code == 200
-    r2 = client.post("/api/v1/webinars", json={"theme": "Webinar B", "auto_run": False})
+    r2 = client.post(
+        "/api/v1/webinars",
+        json={"theme": "Webinar B", "voice_id": CLONE_VOICE_ID, "auto_run": False},
+    )
     assert r2.status_code == 200
     w1, w2 = r1.json(), r2.json()
 
@@ -199,10 +207,11 @@ def test_script_patch_and_rerun_from_tts(client: TestClient, register_keys):
     assert rerun.json()["status"] == "completed"
 
 
-def test_pipeline_fails_closed_without_keys(client: TestClient):
+def test_pipeline_fails_closed_without_keys(client: TestClient, store):
+    seed_attested_voice_ref(store, CLONE_VOICE_ID)
     r = client.post(
         "/api/v1/webinars",
-        json={"theme": "No keys", "auto_run": True},
+        json={"theme": "No keys", "voice_id": CLONE_VOICE_ID, "auto_run": True},
     )
     assert r.status_code in (401, 400, 403, 500)
 
@@ -259,5 +268,8 @@ def test_qa_answerable_and_hold(client: TestClient, register_keys):
 def test_delete_key_then_generation_fails(client: TestClient, register_keys):
     register_keys()
     client.delete("/api/v1/integrations/orcarouter")
-    r = client.post("/api/v1/webinars", json={"theme": "fail", "auto_run": True})
+    r = client.post(
+        "/api/v1/webinars",
+        json={"theme": "fail", "voice_id": CLONE_VOICE_ID, "auto_run": True},
+    )
     assert r.status_code in (401, 400, 403, 500)

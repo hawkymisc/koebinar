@@ -97,7 +97,7 @@ export interface WebinarCreateInput {
   lang?: Lang
   template?: Template
   style?: Style
-  voice_id?: string
+  voice_id: string
   instructions?: string
   document_ids?: string[]
   auto_run?: boolean

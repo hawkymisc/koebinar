@@ -14,6 +14,7 @@ from koebinar.models import (
 )
 from koebinar.pipeline.steps import GenerationSteps
 from koebinar.qa.service import QAService
+from tests.helpers import seed_attested_voice_ref
 
 
 class RecordingKnowledge:
@@ -67,7 +68,8 @@ def test_generation_keeps_instructions_separate_and_empty_documents_explicit(set
     assert outline["input_hash"] != changed_outline["input_hash"]
 
 
-def test_api_persists_document_provenance_and_webinar_instructions(client):
+def test_api_persists_document_provenance_and_webinar_instructions(client, store):
+    seed_attested_voice_ref(store, "voice-knowledge")
     document = client.post(
         "/api/v1/knowledge/documents",
         json={
@@ -87,6 +89,7 @@ def test_api_persists_document_provenance_and_webinar_instructions(client):
         "/api/v1/webinars",
         json={
             "theme": "提案の要点",
+            "voice_id": "voice-knowledge",
             "instructions": "導入効果を数字で強調する",
             "document_ids": [document.json()["id"]],
             "auto_run": False,

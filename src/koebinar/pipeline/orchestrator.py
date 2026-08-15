@@ -20,6 +20,7 @@ from koebinar.models import (
     Webinar,
     WebinarCreateRequest,
     WebinarStatus,
+    WebinarVoicePatchRequest,
     utcnow,
 )
 from koebinar.pipeline.renderer import VideoRenderer
@@ -96,8 +97,8 @@ class PipelineOrchestrator:
             status=WebinarStatus.CREATED,
         )
         # A-005: draft creation is also a use boundary for provider Voices.
-        # This rejects an unconsented clone even when auto_run is false, while
-        # the reserved "default" system-fallback Voice remains compatible.
+        # Every stored voice ID must resolve to the tenant's current provider
+        # catalog; provider pseudo IDs are deliberately rejected.
         self.integrations.assert_voice_usable(req.voice_id)
         self.store.webinars[wid] = webinar
         if req.auto_run:
@@ -147,6 +148,25 @@ class PipelineOrchestrator:
                 )
             self._require_publishable_video(w)
         w.published_at = utcnow() if req.published else None
+        self.store.webinars[webinar_id] = w
+        return w
+
+    def patch_voice(self, webinar_id: str, req: WebinarVoicePatchRequest) -> Webinar:
+        w = self.get(webinar_id)
+        if w.status in {
+            WebinarStatus.QUEUED,
+            WebinarStatus.RUNNING,
+            WebinarStatus.COMPLETED,
+        }:
+            raise PipelineError(
+                "voice cannot be changed for an in-progress or completed webinar",
+                code="voice_change_not_allowed",
+                status_code=409,
+            )
+        self.integrations.assert_voice_usable(req.voice_id)
+        w.voice_id = req.voice_id
+        w.error = None
+        w.published_at = None
         self.store.webinars[webinar_id] = w
         return w
 

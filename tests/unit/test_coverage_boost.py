@@ -29,6 +29,7 @@ from koebinar.models import (
     WebinarCreateRequest,
     WebinarStatus,
 )
+from tests.helpers import seed_attested_voice_ref
 from koebinar.pipeline.orchestrator import PipelineError, PipelineOrchestrator
 from koebinar.pipeline.renderer import RenderError, VideoRenderer, remotion_available
 from koebinar.pipeline.steps import GenerationSteps
@@ -584,7 +585,12 @@ def test_load_artifact_from_disk(settings: Settings, store: Store):
         # use proper missing type
         from koebinar.models import ArtifactType
 
-        w2 = orch.create_webinar(WebinarCreateRequest(theme="x", auto_run=False))
+        seed_attested_voice_ref(store, "voice-missing-artifact")
+        w2 = orch.create_webinar(
+            WebinarCreateRequest(
+                theme="x", voice_id="voice-missing-artifact", auto_run=False
+            )
+        )
         with pytest.raises(PipelineError):
             orch._load_artifact_json(w2, ArtifactType.OUTLINE)
         client.close()

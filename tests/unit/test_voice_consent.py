@@ -356,13 +356,13 @@ def test_premade_voice_is_allowed_without_tenant_attestation(
     assert webinar.voice_id == PREMADE_VOICE_ID
 
 
-def test_reserved_default_voice_keeps_the_system_fallback_gate(settings: Settings, store: Store):
+def test_default_voice_is_rejected_as_unregistered(settings: Settings, store: Store):
     service = IntegrationsService(store=store, settings=settings)
 
-    ref = service.assert_voice_usable("default")
+    with pytest.raises(VoiceConsentError) as exc:
+        service.assert_voice_usable("default")
 
-    assert ref.voice_id == "default"
-    assert ref.is_usable() is True
+    assert exc.value.code == "voice_not_registered"
 
 
 def test_webinar_creation_rejects_an_arbitrary_voice_id(
