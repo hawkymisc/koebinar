@@ -71,7 +71,9 @@ class Settings(BaseSettings):
 
     # Remotion
     remotion_project_dir: Path = Path("remotion")
-    remotion_timeout_sec: float = 180.0
+    # 1080p H.264 rendering is slower than real time on the 2-vCPU demo host.
+    # Include bundling, Chromium startup, frame rendering, encoding, and muxing.
+    remotion_timeout_sec: float = 900.0
     force_render_double: bool = False
     # Maximum accepted difference between the timeline and probed media.
     audio_duration_tolerance_sec: float = 0.5

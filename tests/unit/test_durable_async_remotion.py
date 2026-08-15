@@ -59,9 +59,23 @@ def test_remotion_project_scaffolded():
     root = Path(__file__).resolve().parents[2] / "remotion"
     assert remotion_project_ready(root)
     assert (root / "render.mjs").exists()
+    render_entry = (root / "render.mjs").read_text(encoding="utf-8")
+    assert 'x264Preset: "veryfast"' in render_entry
+    assert "onProgress:" in render_entry
     assert (root / "src" / "Webinar.tsx").exists()
     assert (root / "src" / "Root.tsx").exists()
     assert (root / "package.json").exists()
+
+
+def test_remotion_timeout_default_supports_long_form_render(monkeypatch):
+    monkeypatch.delenv("KOEBINAR_REMOTION_TIMEOUT_SEC", raising=False)
+    assert Settings().remotion_timeout_sec == 900.0
+
+
+def test_production_image_installs_ffprobe():
+    dockerfile = Path(__file__).resolve().parents[2] / "Dockerfile"
+    contents = dockerfile.read_text(encoding="utf-8")
+    assert "ffmpeg" in contents
 
 
 def test_durable_store_survives_reopen(tmp_path: Path):

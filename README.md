@@ -73,6 +73,7 @@ HTTPSを自動設定する。詳細は `docs/deployment-lightsail.md` を参照�
 | `KOEBINAR_ARTIFACTS_DIR` | `artifacts` | 中間生成物・MP4 |
 | `KOEBINAR_SYNC_PIPELINE` | `false`（スタック時） | `true` で API 内同期実行（テスト向け） |
 | `KOEBINAR_REMOTION_PROJECT_DIR` | `remotion` | Remotion プロジェクト |
+| `KOEBINAR_REMOTION_TIMEOUT_SEC` | `900` | bundle・Chromium起動・全frame描画・H.264 encode・muxを含む最大秒数 |
 | `KOEBINAR_FORCE_RENDER_DOUBLE` | `false` | `true` で Remotion を使わず double |
 | `KOEBINAR_DEFAULT_AUTH_TOKEN` | なし（必須） | 運用者用Bearerトークン。公開フロントへ埋め込まない秘密値 |
 | `KOEBINAR_TENANTS_JSON` | 空 | 複数ワークスペースの `id` / `name` / `access_token` JSON配列。設定時は単一トークン設定より優先 |
@@ -94,6 +95,7 @@ HTTPSを自動設定する。詳細は `docs/deployment-lightsail.md` を参照�
 - プロジェクト: `remotion/`（Composition `Webinar` + `render.mjs`）
 - パイプライン Step 6 は `VideoRenderer` が Remotion を invoke
 - 本番経路はRemotion失敗時にfail-closedとし、映像・音声ストリームと尺のprobeに合格したMP4だけを公開可能にする。`renderer=double`は明示的なテストモード専用で、`publishable=false`として扱う
+- 2 vCPUデモ環境では`concurrency=1`とH.264 `veryfast` presetを使い、15分のworker timeout内でtimeout診断用の進捗を5%刻みで出力する
 - アダプタ境界はユニットテストで runner を差し替えて検証
 
 ```bash

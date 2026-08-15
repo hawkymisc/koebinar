@@ -27,6 +27,7 @@ from koebinar.pipeline.orchestrator import PipelineError, PipelineOrchestrator
 from koebinar.pipeline.renderer import (
     RenderError,
     VideoRenderer,
+    _run_subprocess_tree,
     invoke_remotion_render,
     remotion_available,
     remotion_project_ready,
@@ -164,16 +165,24 @@ def test_renderer_missing_entry_and_timeout(tmp_path: Path, durable):
         )
     # timeout
     def slow(*a, **k):
-        raise subprocess.TimeoutExpired(cmd="node", timeout=1)
+        raise subprocess.TimeoutExpired(
+            cmd="node",
+            timeout=1,
+            output='{"phase":"render","progress_percent":45}',
+        )
 
     proj = Path(__file__).resolve().parents[2] / "remotion"
-    with pytest.raises(RenderError):
+    timeout_output = tmp_path / "t.mp4"
+    with pytest.raises(RenderError, match="timed out after 900.0s.*phase=render, progress=45%"):
         invoke_remotion_render(
             project_dir=proj,
             props={"timeline": {}, "slides": []},
-            output_path=tmp_path / "t.mp4",
+            output_path=timeout_output,
+            timeout_sec=900.0,
             runner=slow,
         )
+    assert not timeout_output.exists()
+    assert not list(tmp_path.glob(f".{timeout_output.name}.*"))
     # FileNotFoundError
     def no_node(*a, **k):
         raise FileNotFoundError("node")
@@ -209,6 +218,29 @@ def test_renderer_missing_entry_and_timeout(tmp_path: Path, durable):
             output_path=tmp_path / "t4.mp4",
             runner=empty_ok,
         )
+
+
+def test_subprocess_timeout_terminates_then_kills_process_group(monkeypatch):
+    process = MagicMock(pid=4321, returncode=-signal.SIGKILL)
+    process.communicate.side_effect = [
+        subprocess.TimeoutExpired(cmd=["node"], timeout=1, output="partial"),
+        subprocess.TimeoutExpired(cmd=["node"], timeout=5, output="partial"),
+        ("final output", "final error"),
+    ]
+    monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=process))
+    killpg = MagicMock()
+    monkeypatch.setattr("koebinar.pipeline.renderer.os.killpg", killpg)
+
+    with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        _run_subprocess_tree(["node"], capture_output=True, text=True, timeout=1)
+
+    assert killpg.call_args_list == [
+        ((4321, signal.SIGTERM),),
+        ((4321, signal.SIGKILL),),
+    ]
+    assert process.communicate.call_count == 3
+    assert exc_info.value.stdout == "final output"
+    assert exc_info.value.stderr == "final error"
 
 
 def test_remotion_available_branches(tmp_path: Path, durable):
