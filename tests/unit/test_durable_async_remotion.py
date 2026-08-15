@@ -63,6 +63,14 @@ def test_remotion_project_scaffolded():
     assert 'x264Preset: "veryfast"' in render_entry
     assert "onProgress:" in render_entry
     assert (root / "src" / "Webinar.tsx").exists()
+    webinar_entry = (root / "src" / "Webinar.tsx").read_text(encoding="utf-8")
+    assert "normalizeSlide" in webinar_entry
+    assert 'type === "bullet-list"' in webinar_entry
+    assert 'type === "feature-cards"' in webinar_entry
+    assert "slide.visual_aid" in webinar_entry
+    assert "slide.elements" in webinar_entry
+    assert "limitText" in webinar_entry
+    assert "timelineSlide.props" in webinar_entry
     assert (root / "src" / "Root.tsx").exists()
     assert (root / "package.json").exists()
 
