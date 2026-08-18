@@ -17,6 +17,7 @@ INVALID_ORCA_KEY = "sk-orca-invalid"
 VALID_EL_KEY = "xi-el-valid-test-key-0001"
 INVALID_EL_KEY = "xi-el-invalid"
 FREE_EL_KEY = "xi-el-free-tier-key-0001"
+CREATED_VOICE_ID = "voice_created_by_koebinar"
 
 
 def _auth_bearer(request: httpx.Request) -> str:
@@ -150,6 +151,46 @@ def install_mocks(
         )
 
     voices_route.side_effect = voices_side_effect
+
+    clone_route = router.post(url__regex=re.compile(rf"{re.escape(el_base)}/voices/add/?$"))
+
+    def clone_side_effect(request: httpx.Request) -> httpx.Response:
+        key = _xi_key(request)
+        if key not in (VALID_EL_KEY, FREE_EL_KEY):
+            return httpx.Response(401, json={"detail": "invalid api key"})
+        if b'name="name"' not in request.content or b'name="files[]"' not in request.content:
+            return httpx.Response(
+                422,
+                json={"detail": {"status": "invalid_multipart", "message": "missing fields"}},
+            )
+        if b"provider-unauthorized" in request.content:
+            return httpx.Response(
+                401,
+                json={"detail": {"status": "invalid_api_key", "message": "expired key"}},
+            )
+        if b"provider-forbidden" in request.content:
+            return httpx.Response(
+                403,
+                json={"detail": {"status": "missing_permissions", "message": "Voices Write required"}},
+            )
+        if b"provider-rate-limited" in request.content:
+            return httpx.Response(
+                429,
+                json={"detail": {"status": "rate_limit_exceeded", "message": "try later"}},
+            )
+        if b"provider-unavailable" in request.content:
+            return httpx.Response(
+                503,
+                json={"detail": {"status": "service_unavailable", "message": "try later"}},
+            )
+        if b"provider-invalid-json" in request.content:
+            return httpx.Response(200, text="not-json")
+        return httpx.Response(
+            200,
+            json={"voice_id": CREATED_VOICE_ID, "requires_verification": False},
+        )
+
+    clone_route.side_effect = clone_side_effect
 
     tts_route = router.post(url__regex=re.compile(rf"{re.escape(el_base)}/text-to-speech/[^/]+/?$"))
 

@@ -6,7 +6,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 文書バージョン | v1.13 |
+| 文書バージョン | v1.14 |
 | 作成日 | 2026-08-08 |
 | 対象フェーズ | ハッカソンMVP / Phase 1 |
 | 文書区分 | ハッカソン開発用 |
@@ -32,6 +32,7 @@
 | 1.11 | 2026-08-15 | ElevenLabsの構造化エラーをallowlist方式で抽出・キー伏字化し、接続検証とTTS失敗理由へ安全に反映する契約を追加 | Codex |
 | 1.12 | 2026-08-15 | BYOKフォームへElevenLabs `sk_`・OrcaRouter `sk-`の接頭辞検証とキーID誤コピー案内を追加 | Codex |
 | 1.13 | 2026-08-15 | OrcaRouterの既定モデルを`orcarouter/auto`へ修正し、Chat固有失敗と保存キー認証失敗を再検証で分離 | Codex |
+| 1.14 | 2026-08-17 | 連携設定からElevenLabs Instant Voice Cloneを作成し、Voice同期と利用同意証跡の記録まで一括実行する仕様を追加 | Codex |
 
 ## 1. 仕様範囲・設計原則
 
@@ -182,6 +183,16 @@ MVPの実装はElevenLabsのみだが、interfaceは維持し将来のエンジ�
 - **フォールバック**: BYOK未登録の場合、構成フラグ `ALLOW_SYSTEM_TTS_KEY=true` のときのみシステムキーで生成可能（デモ・開発用。生成物に「デモ用共有アカウント」フラグを付与）。OrcaRouter側は `ALLOW_SYSTEM_LLM_KEY` で同様に制御する。
 - **推奨案内**: 入力欄直下にElevenLabsは`sk_`、OrcaRouterは`sk-`から始まることを常時表示する。キーボード操作可能な`[i]`ヒントには、接続確認で必須の`GET /v1/voices`（Voices Read）、プラン・使用量表示に任意の`GET /v1/user/subscription`（User Read / `user_read`）、生成の`POST /v1/text-to-speech/{voice_id}`（Text to Speech）、有効期限・IP allowlist・スコープ制限・クレジット上限、Freeプラン確認欄との関係を表示する。ヒントはモバイルviewport外へはみ出さない。
 
+### 5.2.1 連携設定からのInstant Voice Clone作成
+
+- **利用条件**: ワークスペースのElevenLabs BYOKがactiveで、APIキーにVoices Write権限があること。システム共有キーでのVoice Clone作成は許可しない。
+- **UI**: `連携設定 > ElevenLabs`の接続済みカードに、Voice名、説明（任意）、音声ファイル（複数可）、背景ノイズ除去（任意）、話者本人の同意・利用権限確認をまとめて表示する。送信中は重複送信を防止する。
+- **入力制約**: Voice名は1〜100文字、ファイルは1〜5件、対応拡張子は`.mp3` / `.wav` / `.m4a` / `.webm`、1件10 MiB以下、合計25 MiB以下とする。クライアントとサーバーの両方で検証する。multipart解析前に全体上限を判定できるよう、作成APIは正の`Content-Length`を必須とし、未指定・不正値を411、26 MiB超を413で事前拒否する。品質案内はElevenLabsの推奨に合わせ、ノイズ・反響・複数話者のない明瞭な1〜2分を推奨する。
+- **外部API**: バックエンドが登録済みBYOKを復号し、multipartでElevenLabs `POST /v1/voices/add`を呼び出す。音声やAPIキーをブラウザからElevenLabsへ直接送信しない。
+- **一括完了**: 作成成功後は返却された`voice_id`を現在のtenant / integrationの`cloned` Voiceとして登録し、送信時の明示確認を現行の`attestation_version`で記録する。成功後はVoice一覧に同意済みで即時反映する。
+- **データ取扱い**: KoebinarはVoice Clone作成用の音声ファイルを永続化しない。リクエスト処理中のメモリに限定し、ElevenLabs応答後に破棄する。ファイル名・音声内容・外部応答本文はログに出力しない。
+- **エラー**: ElevenLabsの401/403はKoebinarのオペレーター認証401と区別するため422へ変換し、422/429/5xxとともに安全化済み構造化メッセージで返す。ElevenLabs上のVoice作成が失敗した場合はVoice参照や同意証跡を作成しない。外部作成成功後にローカル保存だけが失敗した稀な中間状態は、次回のVoice同期で未同意Voiceとして回復し、自動で同意を付与しない。
+
 ### 5.3 制約・運用
 
 - providerに登録済みのクローン/custom/未知カテゴリVoiceは、運用者が話者本人の同意取得と利用条件を確認し、Voiceごとに明示attestationを記録するまで使用不可とする。既知のpremade Voiceだけを`not_required`とし、旧`consent_flag=true`や証跡sourceのないデータは同意として扱わない。
@@ -242,6 +253,7 @@ REST/JSON、`/api/v1`。運用者APIはワークスペース固有のBearer toke
 | GET | /api/v1/integrations | 全プロバイダーの接続状態取得（キーはマスク表示、検証日時、ELはtier・残量含む） |
 | DELETE | /api/v1/integrations/{provider} | キー削除（ELは関連voice_refs無効化） |
 | GET | /api/v1/integrations/elevenlabs/voices | ElevenLabs登録キーのアカウントのVoice一覧取得 |
+| POST | /api/v1/integrations/elevenlabs/voices/clone | Instant Voice Clone作成（multipart音声、権利確認必須）とtenant内Voice登録・同意証跡記録 |
 | POST | /api/v1/integrations/elevenlabs/voices/{voice_id}/consent | クローン/custom Voiceの明示的な利用同意証跡を記録 |
 | DELETE | /api/v1/integrations/elevenlabs/voices/{voice_id}/consent | Voiceの利用同意証跡を取り消し、以後の生成を拒否 |
 | PATCH | /api/v1/webinars/{id}/voice | 作成前・失敗・途中状態の既存ウェビナーへ利用可能なvoice_idを設定し、再実行前の音声選択を修正 |

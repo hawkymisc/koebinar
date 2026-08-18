@@ -11,6 +11,8 @@ import type {
   Provider,
   SessionResponse,
   VoiceInfo,
+  VoiceCloneInput,
+  VoiceCloneResponse,
   VoiceListResponse,
   Webinar,
   WebinarCreateInput,
@@ -49,6 +51,20 @@ export function deleteIntegration(provider: Provider): Promise<{ status: string;
 
 export function listElevenLabsVoices(): Promise<VoiceListResponse> {
   return apiRequest<VoiceListResponse>('/integrations/elevenlabs/voices')
+}
+
+export function createElevenLabsVoiceClone(input: VoiceCloneInput): Promise<VoiceCloneResponse> {
+  const form = new FormData()
+  form.append('name', input.name)
+  form.append('description', input.description)
+  form.append('remove_background_noise', String(input.removeBackgroundNoise))
+  form.append('consent_confirmed', String(input.consentConfirmed))
+  form.append('attestation_version', input.attestationVersion)
+  input.files.forEach((file) => form.append('files', file, file.name))
+  return apiRequest<VoiceCloneResponse>('/integrations/elevenlabs/voices/clone', {
+    method: 'POST',
+    body: form,
+  })
 }
 
 function voiceConsentPath(voiceId: string): string {

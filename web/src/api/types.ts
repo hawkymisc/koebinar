@@ -171,6 +171,21 @@ export interface VoiceListResponse {
   attestation_version: string
 }
 
+export interface VoiceCloneInput {
+  name: string
+  description: string
+  files: File[]
+  removeBackgroundNoise: boolean
+  consentConfirmed: boolean
+  attestationVersion: string
+}
+
+export interface VoiceCloneResponse {
+  voice: VoiceInfo
+  requires_verification: boolean
+  attestation_version: string
+}
+
 export interface Citation {
   document_id: string
   chunk_id: string
