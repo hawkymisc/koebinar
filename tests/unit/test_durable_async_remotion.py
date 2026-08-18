@@ -62,6 +62,10 @@ def test_remotion_project_scaffolded():
     render_entry = (root / "render.mjs").read_text(encoding="utf-8")
     assert 'x264Preset: "veryfast"' in render_entry
     assert "onProgress:" in render_entry
+    assert "renderStill" in render_entry
+    assert "stills-ffmpeg" in render_entry
+    assert "full-remotion" in render_entry
+    assert 'spawn(ffmpegExecutable' in render_entry
     assert (root / "src" / "Webinar.tsx").exists()
     webinar_entry = (root / "src" / "Webinar.tsx").read_text(encoding="utf-8")
     assert "normalizeSlide" in webinar_entry
@@ -78,6 +82,11 @@ def test_remotion_project_scaffolded():
 def test_remotion_timeout_default_supports_long_form_render(monkeypatch):
     monkeypatch.delenv("KOEBINAR_REMOTION_TIMEOUT_SEC", raising=False)
     assert Settings().remotion_timeout_sec == 900.0
+
+
+def test_remotion_static_slide_strategy_is_default(monkeypatch):
+    monkeypatch.delenv("KOEBINAR_REMOTION_RENDER_STRATEGY", raising=False)
+    assert Settings().remotion_render_strategy == "stills-ffmpeg"
 
 
 def test_production_image_installs_ffprobe():
@@ -245,9 +254,15 @@ def test_invoke_remotion_success_with_fake_runner(tmp_path: Path):
     out = tmp_path / "out.mp4"
 
     def fake_run(cmd, **kwargs):
+        assert cmd[cmd.index("--strategy") + 1] == "stills-ffmpeg"
         path = Path(cmd[cmd.index("--output") + 1])
         path.write_bytes(b"remotion-fake-render")
-        return subprocess.CompletedProcess(cmd, 0, stdout='{"phase":"done"}', stderr="")
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='{"phase":"done","strategy":"stills-ffmpeg","rendered_stills":3}',
+            stderr="",
+        )
 
     meta = invoke_remotion_render(
         project_dir=project,
@@ -257,9 +272,50 @@ def test_invoke_remotion_success_with_fake_runner(tmp_path: Path):
         probe=_passing_probe,
     )
     assert meta["renderer"] == "remotion"
+    assert meta["render_strategy"] == "stills-ffmpeg"
+    assert meta["rendered_stills"] == 3
     assert meta["publishable"] is True
     assert meta["probe"]["ok"] is True
     assert out.exists() and out.stat().st_size > 10
+
+
+def test_invoke_remotion_supports_explicit_full_render_fallback(tmp_path: Path):
+    project = Path(__file__).resolve().parents[2] / "remotion"
+    out = tmp_path / "out.mp4"
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[cmd.index("--strategy") + 1] == "full-remotion"
+        path = Path(cmd[cmd.index("--output") + 1])
+        path.write_bytes(b"remotion-full-render")
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='{"phase":"done","strategy":"full-remotion"}',
+            stderr="",
+        )
+
+    meta = invoke_remotion_render(
+        project_dir=project,
+        props={"timeline": {"total_frames": 30, "fps": 30, "slides": []}, "slides": []},
+        output_path=out,
+        render_strategy="full-remotion",
+        runner=fake_run,
+        probe=_passing_probe,
+    )
+
+    assert meta["renderer"] == "remotion"
+    assert meta["render_strategy"] == "full-remotion"
+
+
+def test_invoke_remotion_rejects_unknown_render_strategy(tmp_path: Path):
+    with pytest.raises(RenderError, match="unsupported remotion render strategy"):
+        invoke_remotion_render(
+            project_dir=Path(__file__).resolve().parents[2] / "remotion",
+            props={"timeline": {"total_frames": 30, "fps": 30, "slides": []}, "slides": []},
+            output_path=tmp_path / "out.mp4",
+            render_strategy="surprise",
+            probe=_passing_probe,
+        )
 
 
 def test_invoke_remotion_failure(tmp_path: Path):
@@ -332,6 +388,7 @@ def test_video_renderer_uses_remotion_when_available(tmp_path: Path, settings: S
     out_bytes = {}
 
     def fake_run(cmd, **kwargs):
+        assert cmd[cmd.index("--strategy") + 1] == "stills-ffmpeg"
         # last arg is output path
         path = Path(cmd[cmd.index("--output") + 1])
         path.write_bytes(b"\x00\x00\x00\x1cftypisomREEL")
@@ -350,6 +407,49 @@ def test_video_renderer_uses_remotion_when_available(tmp_path: Path, settings: S
         assert meta["renderer"] == "remotion"
         assert r.used_double is False
         assert Path(uri).read_bytes() == b"\x00\x00\x00\x1cftypisomREEL"
+
+
+def test_video_renderer_honors_timeline_render_strategy(
+    settings: Settings, store: Store
+):
+    settings.force_render_double = False
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[cmd.index("--strategy") + 1] == "full-remotion"
+        path = Path(cmd[cmd.index("--output") + 1])
+        path.write_bytes(b"\x00\x00\x00\x1cftypisomFULL")
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='{"phase":"done","strategy":"full-remotion"}',
+            stderr="",
+        )
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("koebinar.pipeline.renderer.remotion_available", lambda s=None: True)
+        renderer = VideoRenderer(
+            store=store,
+            settings=settings,
+            runner=fake_run,
+            probe=_passing_probe,
+        )
+        timeline = {
+            "fps": 30,
+            "total_frames": 30,
+            "render_strategy": "full-remotion",
+            "slides": [
+                {
+                    "slide_index": 0,
+                    "title": "T",
+                    "start_frame": 0,
+                    "end_frame": 30,
+                    "duration_frames": 30,
+                }
+            ],
+        }
+        _, meta = renderer.render("web-full", timeline, [{"title": "T"}])
+
+    assert meta["render_strategy"] == "full-remotion"
 
 
 def test_video_renderer_does_not_fallback_to_double_on_remotion_failure(

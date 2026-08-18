@@ -73,7 +73,8 @@ HTTPSを自動設定する。詳細は `docs/deployment-lightsail.md` を参照�
 | `KOEBINAR_ARTIFACTS_DIR` | `artifacts` | 中間生成物・MP4 |
 | `KOEBINAR_SYNC_PIPELINE` | `false`（スタック時） | `true` で API 内同期実行（テスト向け） |
 | `KOEBINAR_REMOTION_PROJECT_DIR` | `remotion` | Remotion プロジェクト |
-| `KOEBINAR_REMOTION_TIMEOUT_SEC` | `900` | bundle・Chromium起動・全frame描画・H.264 encode・muxを含む最大秒数 |
+| `KOEBINAR_REMOTION_RENDER_STRATEGY` | `stills-ffmpeg` | 静止スライド高速経路。動的compositionは`full-remotion`を明示指定 |
+| `KOEBINAR_REMOTION_TIMEOUT_SEC` | `900` | bundle・Chromium起動・still/frame描画・H.264 encode・muxを含む最大秒数 |
 | `KOEBINAR_FORCE_RENDER_DOUBLE` | `false` | `true` で Remotion を使わず double |
 | `KOEBINAR_DEFAULT_AUTH_TOKEN` | なし（必須） | 運用者用Bearerトークン。公開フロントへ埋め込まない秘密値 |
 | `KOEBINAR_TENANTS_JSON` | 空 | 複数ワークスペースの `id` / `name` / `access_token` JSON配列。設定時は単一トークン設定より優先 |
@@ -94,14 +95,16 @@ HTTPSを自動設定する。詳細は `docs/deployment-lightsail.md` を参照�
 
 - プロジェクト: `remotion/`（Composition `Webinar` + `render.mjs`）
 - パイプライン Step 6 は `VideoRenderer` が Remotion を invoke
+- 既定は各スライドの完成状態をRemotionで1枚だけPNG化し、FFmpegで表示尺・0.35秒フェード・音声配置・H.264/AAC出力を合成する。フレームごとの動きが必要なtimelineは`render_strategy=full-remotion`を明示する
 - 本番経路はRemotion失敗時にfail-closedとし、映像・音声ストリームと尺のprobeに合格したMP4だけを公開可能にする。`renderer=double`は明示的なテストモード専用で、`publishable=false`として扱う
-- 2 vCPUデモ環境では`concurrency=1`とH.264 `veryfast` presetを使い、15分のworker timeout内でtimeout診断用の進捗を5%刻みで出力する
+- H.264は`veryfast` presetを使う。`full-remotion`では2 vCPUデモ環境向けに`concurrency=1`とし、timeout診断用の進捗を5%刻みで出力する
 - アダプタ境界はユニットテストで runner を差し替えて検証
 
 ```bash
 # 手動 render 試行
 cd remotion
-node render.mjs --props /path/props.json --output /tmp/out.mp4
+node render.mjs --props /path/props.json --output /tmp/out.mp4 --public-dir /path/staged-public
+# 動的compositionのみ: ... --strategy full-remotion
 ```
 
 ## Web UI（運用者コンソール + 公開視聴ページ）
