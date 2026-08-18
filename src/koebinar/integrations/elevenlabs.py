@@ -82,6 +82,10 @@ class ElevenLabsClient:
     def _headers(self) -> dict[str, str]:
         return {"xi-api-key": self.api_key, "Content-Type": "application/json"}
 
+    def _auth_headers(self) -> dict[str, str]:
+        """Authentication-only headers for requests that set their own content type."""
+        return {"xi-api-key": self.api_key}
+
     def _safe_provider_text(self, value: Any, *, limit: int = 500) -> str | None:
         if not isinstance(value, str):
             return None
@@ -145,6 +149,44 @@ class ElevenLabsClient:
         if resp.status_code >= 400:
             raise self._response_error("voices", resp)
         return resp.json()
+
+    def create_voice_clone(
+        self,
+        name: str,
+        files: list[tuple[str, bytes, str]],
+        *,
+        description: str = "",
+        remove_background_noise: bool = False,
+    ) -> dict[str, Any]:
+        """Create an ElevenLabs Instant Voice Clone from in-memory samples."""
+        url = f"{self.base_url}/voices/add"
+        multipart_files = [
+            ("files[]", (filename, content, content_type))
+            for filename, content, content_type in files
+        ]
+        data = {
+            "name": name,
+            "description": description,
+            "remove_background_noise": str(remove_background_noise).lower(),
+        }
+        try:
+            resp = self._client.post(
+                url,
+                headers=self._auth_headers(),
+                data=data,
+                files=multipart_files,
+            )
+        except httpx.HTTPError as exc:
+            raise ElevenLabsError(f"voice clone request failed: {exc}") from exc
+        if resp.status_code >= 400:
+            raise self._response_error("voice clone", resp)
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise ElevenLabsError("voice clone response was not valid JSON", status_code=502) from exc
+        if not isinstance(payload, dict) or not payload.get("voice_id"):
+            raise ElevenLabsError("voice clone response missing voice_id", status_code=502)
+        return payload
 
     def _post_tts(
         self,

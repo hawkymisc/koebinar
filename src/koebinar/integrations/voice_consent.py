@@ -102,24 +102,7 @@ class VoiceConsentService:
             if not voice_id:
                 continue
             seen.add(voice_id)
-            category = payload.get("category") or "unknown"
-            labels = payload.get("labels") or {}
-            existing = self._load(voice_id)
-            ref = VoiceRef(
-                tenant_id=self.tenant_id,
-                integration_id=integration_id,
-                provider=self.provider,
-                voice_id=voice_id,
-                name=payload.get("name") or "unnamed",
-                category=category,
-                labels={str(k): str(v) for k, v in labels.items()},
-                active=True,
-                consent_status=consent_status_for_category(category),
-                synced_at=utcnow(),
-            )
-            if existing is not None:
-                ref = self._carry_over_attestation(existing, ref)
-            result.append(self._save(ref).to_voice_info())
+            result.append(self._sync_payload(payload, integration_id=integration_id))
 
         # Voices the provider no longer exposes for this tenant.
         for stale in self.list_refs():
@@ -129,6 +112,38 @@ class VoiceConsentService:
             stale.synced_at = utcnow()
             self._save(stale)
         return result
+
+    def sync_one(self, payload: dict[str, Any], *, integration_id: str) -> VoiceInfo:
+        """Upsert one newly created provider Voice without deactivating other refs."""
+        voice_id = payload.get("voice_id") or payload.get("id") or ""
+        if not voice_id:
+            raise VoiceConsentError(
+                "provider voice_id is required",
+                code="voice_id_missing",
+                status_code=502,
+            )
+        return self._sync_payload(payload, integration_id=integration_id)
+
+    def _sync_payload(self, payload: dict[str, Any], *, integration_id: str) -> VoiceInfo:
+        voice_id = payload.get("voice_id") or payload.get("id") or ""
+        category = payload.get("category") or "unknown"
+        labels = payload.get("labels") or {}
+        existing = self._load(voice_id)
+        ref = VoiceRef(
+            tenant_id=self.tenant_id,
+            integration_id=integration_id,
+            provider=self.provider,
+            voice_id=voice_id,
+            name=payload.get("name") or "unnamed",
+            category=category,
+            labels={str(k): str(v) for k, v in labels.items()},
+            active=True,
+            consent_status=consent_status_for_category(category),
+            synced_at=utcnow(),
+        )
+        if existing is not None:
+            ref = self._carry_over_attestation(existing, ref)
+        return self._save(ref).to_voice_info()
 
     def _carry_over_attestation(self, existing: VoiceRef, fresh: VoiceRef) -> VoiceRef:
         """Preserve consent for the same tenant and stable provider voice ID.

@@ -148,6 +148,91 @@ class IntegrationsService:
             ]
         return self.voice_consent.sync(payloads, integration_id=integration_id)
 
+    def create_voice_clone(
+        self,
+        *,
+        name: str,
+        files: list[tuple[str, bytes, str]],
+        description: str,
+        remove_background_noise: bool,
+        attestation_version: str,
+        attested_by: str,
+    ) -> tuple[VoiceInfo, bool]:
+        """Create, register, and explicitly attest one tenant-owned IVC Voice."""
+        record = self._get_record(Provider.ELEVENLABS)
+        if (
+            record is None
+            or record.status != IntegrationStatus.ACTIVE
+            or not record.encrypted_api_key
+        ):
+            raise IntegrationError(
+                "an active tenant ElevenLabs integration is required for voice cloning",
+                code="byok_required",
+                status_code=409,
+            )
+
+        try:
+            key = self.resolve_api_key(Provider.ELEVENLABS, require=True)
+        except IntegrationError as exc:
+            if exc.status_code == 401:
+                raise IntegrationError(
+                    str(exc),
+                    code=exc.code,
+                    status_code=422,
+                ) from exc
+            raise
+        client = ElevenLabsClient(
+            key,
+            base_url=self.settings.elevenlabs_base_url,
+            settings=self.settings,
+            client=self.http_client,
+        )
+        try:
+            payload = client.create_voice_clone(
+                name,
+                files,
+                description=description,
+                remove_background_noise=remove_background_noise,
+            )
+        except ElevenLabsError as exc:
+            if exc.status_code == 401:
+                self.mark_invalid(Provider.ELEVENLABS)
+            # Provider authentication/permission failures are configuration
+            # errors, not Koebinar operator-auth failures. Never return 401 or
+            # the web client would correctly clear its Koebinar session.
+            response_status = 422 if exc.status_code in (401, 403) else (exc.status_code or 502)
+            raise IntegrationError(
+                str(exc),
+                code="voice_clone_failed",
+                status_code=response_status,
+            ) from exc
+        finally:
+            if self.http_client is None:
+                client.close()
+
+        voice_id = str(payload["voice_id"])
+        # The provider mutation is already durable at this point. The route
+        # validates attestation_version before calling us, leaving only a local
+        # storage failure as a possible partial-completion case. A later Voice
+        # sync safely recovers the provider-created Voice without granting
+        # consent implicitly.
+        self.voice_consent.sync_one(
+            {
+                "voice_id": voice_id,
+                "name": name,
+                "category": "cloned",
+                "labels": {"source": "koebinar_ivc"},
+            },
+            integration_id=record.id,
+        )
+        ref = self.attest_voice_consent(
+            voice_id,
+            accepted=True,
+            attestation_version=attestation_version,
+            attested_by=attested_by,
+        )
+        return ref.to_voice_info(), bool(payload.get("requires_verification", False))
+
     def list_voice_refs(self) -> list[VoiceRef]:
         return self.voice_consent.list_refs()
 

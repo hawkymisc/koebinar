@@ -12,7 +12,7 @@ from koebinar.main import create_app
 from koebinar.models import VOICE_ATTESTATION_VERSION
 from koebinar.storage import Store
 from tests.helpers import CLONE_VOICE_ID, seed_attested_voice_ref
-from tests.mocks.providers import VALID_EL_KEY, VALID_ORCA_KEY
+from tests.mocks.providers import CREATED_VOICE_ID, VALID_EL_KEY, VALID_ORCA_KEY
 
 
 def _tenant_client(settings: Settings, mock_providers) -> tuple[TestClient, Store]:
@@ -186,6 +186,38 @@ def test_byok_integrations_are_tenant_scoped(settings, mock_providers):
         records = [record for record in store.integrations.values() if record.status.value != "deleted"]
         assert len(records) == 1
         assert records[0].tenant_id == "acme"
+
+
+def test_created_voice_clone_and_attestation_are_tenant_scoped(settings, mock_providers):
+    client, store = _tenant_client(settings, mock_providers)
+    with client:
+        for token in ("acme-secret", "globex-secret"):
+            registered = client.post(
+                "/api/v1/integrations/elevenlabs",
+                headers=_headers(token),
+                json={"api_key": VALID_EL_KEY, "accept_free_tier": False},
+            )
+            assert registered.status_code == 200
+
+        created = client.post(
+            "/api/v1/integrations/elevenlabs/voices/clone",
+            headers=_headers("acme-secret"),
+            data={
+                "name": "Acme Speaker",
+                "description": "",
+                "remove_background_noise": "false",
+                "consent_confirmed": "true",
+                "attestation_version": VOICE_ATTESTATION_VERSION,
+            },
+            files=[("files", ("acme.mp3", b"sample", "audio/mpeg"))],
+        )
+        assert created.status_code == 200
+        assert created.json()["voice"]["attested_by"] == "acme"
+
+        acme_refs = [raw for raw in store.voice_refs.values() if raw["tenant_id"] == "acme"]
+        globex_refs = [raw for raw in store.voice_refs.values() if raw["tenant_id"] == "globex"]
+        assert [ref["voice_id"] for ref in acme_refs] == [CREATED_VOICE_ID]
+        assert globex_refs == []
 
 
 def test_legacy_single_token_maps_to_default_tenant(settings, store, mock_providers):

@@ -5,7 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 
 from koebinar.api.deps import AppState, get_app_state, get_tenant_services, require_auth
@@ -27,6 +38,61 @@ from koebinar.models import (
     WebinarVoicePatchRequest,
 )
 from koebinar.pipeline.orchestrator import PipelineError
+
+
+VOICE_CLONE_ALLOWED_SUFFIXES = {".mp3", ".wav", ".m4a", ".webm"}
+VOICE_CLONE_MAX_FILES = 5
+VOICE_CLONE_MAX_FILE_BYTES = 10 * 1024 * 1024
+VOICE_CLONE_MAX_TOTAL_BYTES = 25 * 1024 * 1024
+# Multipart boundaries and form fields add overhead beyond the sample bytes.
+VOICE_CLONE_MAX_REQUEST_BYTES = VOICE_CLONE_MAX_TOTAL_BYTES + 1024 * 1024
+
+
+async def _read_voice_clone_files(
+    uploads: list[UploadFile],
+) -> list[tuple[str, bytes, str]]:
+    if not uploads or len(uploads) > VOICE_CLONE_MAX_FILES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"voice samples must contain 1 to {VOICE_CLONE_MAX_FILES} files",
+        )
+
+    result: list[tuple[str, bytes, str]] = []
+    total_bytes = 0
+    try:
+        for upload in uploads:
+            filename = Path(upload.filename or "").name
+            suffix = Path(filename).suffix.lower()
+            if suffix not in VOICE_CLONE_ALLOWED_SUFFIXES:
+                raise HTTPException(
+                    status_code=422,
+                    detail="voice samples must be .mp3, .wav, .m4a, or .webm",
+                )
+            chunks: list[bytes] = []
+            file_bytes = 0
+            while chunk := await upload.read(1024 * 1024):
+                file_bytes += len(chunk)
+                total_bytes += len(chunk)
+                if file_bytes > VOICE_CLONE_MAX_FILE_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="each voice sample must be 10 MiB or smaller",
+                    )
+                if total_bytes > VOICE_CLONE_MAX_TOTAL_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="voice samples must total 25 MiB or smaller",
+                    )
+                chunks.append(chunk)
+            if file_bytes == 0:
+                raise HTTPException(status_code=422, detail="voice samples must not be empty")
+            result.append(
+                (filename, b"".join(chunks), upload.content_type or "application/octet-stream")
+            )
+        return result
+    finally:
+        for upload in uploads:
+            await upload.close()
 
 
 def build_router() -> APIRouter:
@@ -357,6 +423,46 @@ def build_router() -> APIRouter:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         return {
             "voices": [v.model_dump(mode="json") for v in voices],
+            "attestation_version": VOICE_ATTESTATION_VERSION,
+        }
+
+    @router.post("/integrations/elevenlabs/voices/clone")
+    async def create_voice_clone(
+        request: Request,
+        principal: AuthPrincipal = Depends(require_auth),
+        name: str = Form(...),
+        description: str = Form(""),
+        remove_background_noise: bool = Form(False),
+        consent_confirmed: bool = Form(...),
+        attestation_version: str = Form(...),
+        files: list[UploadFile] = File(...),
+    ) -> dict[str, Any]:
+        normalized_name = name.strip()
+        if not normalized_name or len(normalized_name) > 100:
+            raise HTTPException(status_code=422, detail="voice name must be 1 to 100 characters")
+        if len(description) > 500:
+            raise HTTPException(status_code=422, detail="voice description must be 500 characters or less")
+        if not consent_confirmed:
+            raise HTTPException(status_code=400, detail="voice cloning consent confirmation is required")
+        if attestation_version != VOICE_ATTESTATION_VERSION:
+            raise HTTPException(status_code=400, detail="unsupported attestation_version")
+
+        samples = await _read_voice_clone_files(files)
+        state = get_tenant_services(request)
+        try:
+            voice, requires_verification = state.integrations.create_voice_clone(
+                name=normalized_name,
+                files=samples,
+                description=description.strip(),
+                remove_background_noise=remove_background_noise,
+                attestation_version=attestation_version,
+                attested_by=principal.tenant_id,
+            )
+        except IntegrationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return {
+            "voice": voice.model_dump(mode="json"),
+            "requires_verification": requires_verification,
             "attestation_version": VOICE_ATTESTATION_VERSION,
         }
 

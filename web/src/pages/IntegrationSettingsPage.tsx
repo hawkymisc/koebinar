@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ApiError } from '../api/client'
 import {
   attestElevenLabsVoice,
+  createElevenLabsVoiceClone,
   deleteIntegration,
   listElevenLabsVoices,
   listIntegrations,
@@ -10,6 +11,7 @@ import {
 } from '../api/endpoints'
 import type { IntegrationView, Provider, VoiceInfo } from '../api/types'
 import { API_KEY_PREFIXES, validateApiKeyPrefix } from './integrationKeyValidation'
+import { validateVoiceCloneFiles } from './voiceCloneValidation'
 
 const PROVIDERS: Array<{
   id: Provider
@@ -30,7 +32,7 @@ const PROVIDERS: Array<{
     name: 'ElevenLabs',
     description: 'クローン音声によるナレーション生成に使用します。',
     hint: 'sk_ から始まるAPIキー',
-    permissionHint: '接続確認では必須の GET /v1/voices（Voices Read）を使用し、音声生成では POST /v1/text-to-speech/{voice_id}（Text to Speech）を使用します。GET /v1/user/subscription に必要な User Read（user_read）はプラン・使用量表示のための任意権限で、なくても接続できます。有効期限・IP allowlist・スコープ制限・クレジット上限も失敗要因になり得ます。Freeプランでは商用利用条件を確認し、下の確認欄にチェックしてください。',
+    permissionHint: '接続確認では必須の GET /v1/voices（Voices Read）を使用し、音声生成では POST /v1/text-to-speech/{voice_id}（Text to Speech）、Voice Clone作成では POST /v1/voices/add（Voices Write）を使用します。GET /v1/user/subscription に必要な User Read（user_read）はプラン・使用量表示のための任意権限で、なくても接続できます。有効期限・IP allowlist・スコープ制限・クレジット上限も失敗要因になり得ます。Freeプランでは商用利用条件を確認し、下の確認欄にチェックしてください。',
   },
 ]
 
@@ -54,6 +56,13 @@ export function IntegrationSettingsPage() {
   const [consentChecks, setConsentChecks] = useState<Record<string, boolean>>({})
   const [busyVoice, setBusyVoice] = useState<string | null>(null)
   const [loadingVoices, setLoadingVoices] = useState(false)
+  const [cloneName, setCloneName] = useState('')
+  const [cloneDescription, setCloneDescription] = useState('')
+  const [cloneFiles, setCloneFiles] = useState<File[]>([])
+  const [removeBackgroundNoise, setRemoveBackgroundNoise] = useState(false)
+  const [cloneConsent, setCloneConsent] = useState(false)
+  const [cloning, setCloning] = useState(false)
+  const cloneFileInput = useRef<HTMLInputElement>(null)
 
   const byProvider = useMemo(
     () => new Map(integrations.map((integration) => [integration.provider, integration])),
@@ -139,9 +148,60 @@ export function IntegrationSettingsPage() {
   }
 
   function replaceVoice(updated: VoiceInfo) {
-    setVoices((current) => current.map((voice) => (
-      voice.voice_id === updated.voice_id ? updated : voice
-    )))
+    setVoices((current) => {
+      const exists = current.some((voice) => voice.voice_id === updated.voice_id)
+      if (!exists) return [...current, updated]
+      return current.map((voice) => voice.voice_id === updated.voice_id ? updated : voice)
+    })
+  }
+
+  async function handleClone(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const filesError = validateVoiceCloneFiles(cloneFiles)
+    if (filesError) {
+      setError(filesError)
+      return
+    }
+    if (!cloneConsent) {
+      setError('話者本人の同意と利用権限を確認してください。')
+      return
+    }
+
+    setCloning(true)
+    setError(null)
+    setMessage(null)
+    try {
+      let currentAttestationVersion = attestationVersion
+      if (!currentAttestationVersion) {
+        const response = await listElevenLabsVoices()
+        setVoices(response.voices)
+        setAttestationVersion(response.attestation_version)
+        currentAttestationVersion = response.attestation_version
+      }
+      const response = await createElevenLabsVoiceClone({
+        name: cloneName.trim(),
+        description: cloneDescription.trim(),
+        files: cloneFiles,
+        removeBackgroundNoise,
+        consentConfirmed: cloneConsent,
+        attestationVersion: currentAttestationVersion,
+      })
+      replaceVoice(response.voice)
+      setAttestationVersion(response.attestation_version)
+      setCloneName('')
+      setCloneDescription('')
+      setCloneFiles([])
+      setRemoveBackgroundNoise(false)
+      setCloneConsent(false)
+      if (cloneFileInput.current) cloneFileInput.current.value = ''
+      setMessage(response.requires_verification
+        ? `${response.voice.name} を作成しました。ElevenLabsでの本人確認完了後に利用できます。`
+        : `${response.voice.name} を作成し、利用同意を記録しました。`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Voice Cloneを作成できませんでした。')
+    } finally {
+      setCloning(false)
+    }
   }
 
   async function handleConsent(voice: VoiceInfo) {
@@ -241,6 +301,85 @@ export function IntegrationSettingsPage() {
                       連携を解除
                     </button>
                   </div>
+                  {provider.id === 'elevenlabs' && (
+                    <form className="voice-clone-form" onSubmit={(event) => void handleClone(event)}>
+                      <div className="voice-clone-heading">
+                        <div>
+                          <h3>Voice Cloneを作成</h3>
+                          <p>明瞭な1〜2分の音声を推奨します。ノイズ・反響・複数話者は避けてください。</p>
+                        </div>
+                        <span>Instant</span>
+                      </div>
+                      <div className="field">
+                        <label htmlFor="voice-clone-name">Voice名</label>
+                        <input
+                          id="voice-clone-name"
+                          value={cloneName}
+                          onChange={(event) => setCloneName(event.target.value)}
+                          required
+                          minLength={1}
+                          maxLength={100}
+                          placeholder="例: 田中 太郎"
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="voice-clone-description">説明（任意）</label>
+                        <input
+                          id="voice-clone-description"
+                          value={cloneDescription}
+                          onChange={(event) => setCloneDescription(event.target.value)}
+                          maxLength={500}
+                          placeholder="例: 日本語ウェビナー用"
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="voice-clone-files">サンプル音声</label>
+                        <input
+                          ref={cloneFileInput}
+                          id="voice-clone-files"
+                          type="file"
+                          accept=".mp3,.wav,.m4a,.webm,audio/mpeg,audio/wav,audio/mp4,audio/webm"
+                          multiple
+                          required
+                          onChange={(event) => {
+                            const selected = Array.from(event.currentTarget.files ?? [])
+                            const validationError = validateVoiceCloneFiles(selected)
+                            if (validationError) {
+                              setCloneFiles([])
+                              setError(validationError)
+                              event.currentTarget.value = ''
+                              return
+                            }
+                            setCloneFiles(selected)
+                            setError(null)
+                          }}
+                        />
+                        <small>MP3 / WAV / M4A / WebM、最大5件、1件10 MiB・合計25 MiBまで</small>
+                        {cloneFiles.length > 0 && <small>{cloneFiles.length}件の音声を選択中</small>}
+                      </div>
+                      <label className="consent-row">
+                        <input
+                          type="checkbox"
+                          checked={removeBackgroundNoise}
+                          onChange={(event) => setRemoveBackgroundNoise(event.target.checked)}
+                        />
+                        背景ノイズを除去する（元音声がクリアな場合はOFF推奨）
+                      </label>
+                      <label className="consent-row voice-clone-consent">
+                        <input
+                          type="checkbox"
+                          checked={cloneConsent}
+                          onChange={(event) => setCloneConsent(event.target.checked)}
+                          required
+                        />
+                        私は話者本人、またはこの声をクローンし利用するための明示的な同意と権利を得ています
+                      </label>
+                      <button className="btn btn-primary" type="submit" disabled={cloning || busy !== null}>
+                        {cloning ? '作成中…' : 'Voice Cloneを作成'}
+                      </button>
+                      <p className="voice-clone-privacy">音声はElevenLabsへ送信され、Koebinarには保存されません。</p>
+                    </form>
+                  )}
                 </div>
               ) : (
                 <form className="integration-form" onSubmit={(event) => void handleRegister(event, provider.id)}>
@@ -283,6 +422,9 @@ export function IntegrationSettingsPage() {
                   <button className="btn btn-primary" type="submit" disabled={busy !== null}>
                     {busy === provider.id ? '検証中…' : '検証して接続'}
                   </button>
+                  {provider.id === 'elevenlabs' && (
+                    <p className="voice-clone-privacy">接続後に、この画面からVoice Cloneを作成できます。</p>
+                  )}
                 </form>
               )}
             </section>

@@ -58,10 +58,14 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     const token = getToken()
     if (token) headers.Authorization = `Bearer ${token}`
   }
-  let payload: string | undefined
+  let payload: BodyInit | undefined
   if (body !== undefined) {
-    headers['Content-Type'] = 'application/json'
-    payload = JSON.stringify(body)
+    if (body instanceof FormData) {
+      payload = body
+    } else {
+      headers['Content-Type'] = 'application/json'
+      payload = JSON.stringify(body)
+    }
   }
 
   const response = await fetch(`${API_BASE}${path}`, {
