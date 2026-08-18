@@ -74,9 +74,11 @@ class Settings(BaseSettings):
 
     # Remotion
     remotion_project_dir: Path = Path("remotion")
-    # 1080p H.264 rendering is slower than real time on the 2-vCPU demo host.
-    # Include bundling, Chromium startup, frame rendering, encoding, and muxing.
+    # Includes bundling, Chromium startup, still/frame rendering, encoding, and muxing.
     remotion_timeout_sec: float = 900.0
+    # Static webinar slides are rasterized once by Remotion and assembled by
+    # FFmpeg. A timeline can opt into "full-remotion" for frame-by-frame motion.
+    remotion_render_strategy: str = "stills-ffmpeg"
     force_render_double: bool = False
     # Maximum accepted difference between the timeline and probed media.
     audio_duration_tolerance_sec: float = 0.5

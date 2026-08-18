@@ -195,8 +195,10 @@ MVPの実装はElevenLabsのみだが、interfaceは維持し将来のエンジ�
 
 - スライドはReact componentとして実装し、`slides.json`のpropsで内容を注入する。
 - テーマ: tech（ダーク/シアン）、casual（暖色/丸み）、formal（白基調）。フォントはNoto Sans CJK JP / Noto Serif CJK JP。
-- タイムライン: `durations.json`から各スライドのdurationInFramesを算出（30fps）。音声は`<Audio>`でスライド区間に配置。
-- 出力: 1080p / 30fps / H.264 MP4。ローカル`@remotion/renderer`でレンダリング。尺・解像度は構成値。
+- タイムライン: `durations.json`から各スライドのdurationInFramesを算出（30fps）。音声はフレーム境界を48kHz sample offsetへ変換してスライド区間に配置する。
+- 既定レンダリング: 各スライドの完成状態をローカル`@remotion/renderer`で1枚のPNGへ描画し、FFmpegで表示尺、0.35秒フェード、音声配置を合成する。静止画枚数は動画尺ではなくスライド数に比例する。
+- 動的レンダリング: フレーム単位の動きが必要なcompositionはtimelineの`render_strategy=full-remotion`、または`KOEBINAR_REMOTION_RENDER_STRATEGY=full-remotion`を明示し、従来の全frame Remotion経路を使う。高速経路失敗時の暗黙フォールバックは行わない。
+- 出力: 1080p / 30fps / H.264/AAC MP4。尺・解像度は構成値。
 - 成果物確定: 一時ファイルへレンダリングし、`ffprobe`で映像・音声ストリームと構成尺を検査してから原子的に`webinar.mp4`へ確定する。Remotionまたはprobe失敗はStep失敗とし、テストダブルへ自動フォールバックしない。
 - 公開条件: `renderer=remotion`、`test_only=false`、`publishable=true`、probe成功、成果物実在をすべて満たす場合だけ公開可能とする。
 - 字幕（Could）: script.jsonから字幕トラックを焼き込みまたはVTT出力。

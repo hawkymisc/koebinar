@@ -1,9 +1,10 @@
-"""Video renderer — Remotion worker invoke with honest double fallback.
+"""Video renderer — fail-closed Remotion/FFmpeg worker invocation.
 
 The pipeline video step always goes through VideoRenderer.render(). When
-Remotion is configured and available, it shells out to the local remotion
-project. Otherwise (or on invoke failure) it writes a minimal MP4 via the
-same entry so artifacts remain durable.
+Remotion is configured and available, it shells out to the local render entry.
+Static slide timelines rasterize one frame per slide with Remotion and assemble
+the final media with FFmpeg. Dynamic timelines can explicitly select full-frame
+Remotion rendering. The minimal MP4 renderer is an explicit test double only.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ from koebinar.storage import Store, get_store
 # Injectable subprocess runner for unit tests
 SubprocessRunner = Callable[..., subprocess.CompletedProcess]
 MediaProbe = Callable[..., dict[str, Any]]
+
+_REMOTION_RENDER_STRATEGIES = {"stills-ffmpeg", "full-remotion"}
 
 
 class RenderError(Exception):
@@ -292,6 +295,7 @@ def invoke_remotion_render(
     probe: Optional[MediaProbe] = None,
     timeline: Optional[dict[str, Any]] = None,
     audio_duration_tolerance_sec: float = 0.5,
+    render_strategy: str = "stills-ffmpeg",
 ) -> dict[str, Any]:
     """
     Invoke local remotion/render.mjs.
@@ -299,6 +303,8 @@ def invoke_remotion_render(
     Returns metadata dict on success. Raises RenderError on failure.
     """
     runner = runner or _run_subprocess_tree
+    if render_strategy not in _REMOTION_RENDER_STRATEGIES:
+        raise RenderError(f"unsupported remotion render strategy: {render_strategy}")
     render_js = project_dir / "render.mjs"
     if not render_js.exists():
         raise RenderError(f"missing render entry: {render_js}")
@@ -322,6 +328,8 @@ def invoke_remotion_render(
         str(props_path),
         "--output",
         str(temp_output),
+        "--strategy",
+        render_strategy,
     ]
     if public_dir is not None:
         cmd.extend(["--public-dir", str(public_dir)])
@@ -366,6 +374,14 @@ def invoke_remotion_render(
             raise RenderError(f"remotion exit {proc.returncode}: {stderr or stdout}")
         if not temp_output.exists() or temp_output.stat().st_size == 0:
             raise RenderError("remotion completed but output file missing/empty")
+        render_event: dict[str, Any] = {}
+        for line in (proc.stdout or "").splitlines():
+            try:
+                event = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(event, dict) and event.get("phase") == "done":
+                render_event = event
         probe_result = probe(temp_output, require_audio=require_audio)
         errors = _probe_errors(
             probe_result,
@@ -378,6 +394,8 @@ def invoke_remotion_render(
         os.replace(temp_output, output_path)
         return {
             "renderer": "remotion",
+            "render_strategy": str(render_event.get("strategy") or render_strategy),
+            "rendered_stills": render_event.get("rendered_stills"),
             "test_only": False,
             "publishable": True,
             "bytes": output_path.stat().st_size,
@@ -474,6 +492,10 @@ class VideoRenderer:
                 timeline=render_timeline,
                 audio_duration_tolerance_sec=self.settings.audio_duration_tolerance_sec,
                 probe=getattr(self, "probe", None),
+                render_strategy=str(
+                    render_timeline.get("render_strategy")
+                    or self.settings.remotion_render_strategy
+                ),
             )
         finally:
             if stage is not None:
